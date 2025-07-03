@@ -10,22 +10,28 @@ For the full list of settings and their values, see
 https://docs.djangoproject.com/en/5.2/ref/settings/
 """
 
+import os
 from pathlib import Path
+from dotenv import load_dotenv
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
+
+# Load environment variables from .env file
+load_dotenv(BASE_DIR / '.env')
 
 
 # Quick-start development settings - unsuitable for production
 # See https://docs.djangoproject.com/en/5.2/howto/deployment/checklist/
 
 # SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = 'django-insecure-@-kj^rr)n$kq(n*j$g2^@8-r-!sxdso)4--ch)-l__gf!a)^^2'
+SECRET_KEY = os.getenv('SECRET_KEY', 'django-insecure-@-kj^rr)n$kq(n*j$g2^@8-r-!sxdso)4--ch)-l__gf!a)^^2')
 
 # SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = True
+DEBUG = os.getenv('DEBUG', 'False').lower() == 'true'
 
-ALLOWED_HOSTS = []
+# Get allowed hosts from environment variable, fallback to specific hosts
+ALLOWED_HOSTS = os.getenv('ALLOWED_HOSTS', 'localhost,127.0.0.1,yt-summariser-a7fg.onrender.com').split(',')
 
 
 # Application definition
@@ -161,3 +167,59 @@ CORS_ALLOW_HEADERS = [
     'x-requested-with',
     'cache-control',
 ]
+
+# ============================================================================
+# EMBEDDING SERVICES CONFIGURATION
+# ============================================================================
+
+# OpenAI Configuration
+OPENAI_API_KEY = os.getenv('OPENAI_API_KEY')
+OPENAI_CONFIG = {
+    'model': os.getenv('OPENAI_EMBEDDING_MODEL', 'text-embedding-3-large'),
+    'max_tokens': int(os.getenv('OPENAI_MAX_TOKENS', '8191')),
+    'timeout': int(os.getenv('OPENAI_TIMEOUT', '30')),
+    'max_retries': int(os.getenv('OPENAI_MAX_RETRIES', '3')),
+    'batch_size': int(os.getenv('OPENAI_BATCH_SIZE', '100')),
+}
+
+# Pinecone Configuration
+PINECONE_CONFIG = {
+    'api_key': os.getenv('PINECONE_API_KEY'),
+    'environment': os.getenv('PINECONE_ENVIRONMENT', 'us-east-1-aws'),
+    'index_name': os.getenv('PINECONE_INDEX_NAME', 'yt-summariser'),
+    'dimension': int(os.getenv('PINECONE_DIMENSION', '3072')),  # text-embedding-3-large dimension
+    'metric': os.getenv('PINECONE_METRIC', 'cosine'),
+    'cloud': os.getenv('PINECONE_CLOUD', 'aws'),
+    'region': os.getenv('PINECONE_REGION', 'us-east-1'),
+    'timeout': int(os.getenv('PINECONE_TIMEOUT', '30')),
+    'max_retries': int(os.getenv('PINECONE_MAX_RETRIES', '3')),
+}
+
+# Embedding Processing Configuration
+EMBEDDING_CONFIG = {
+    'chunk_size': int(os.getenv('EMBEDDING_CHUNK_SIZE', '512')),
+    'chunk_overlap': int(os.getenv('EMBEDDING_CHUNK_OVERLAP', '50')),
+    'min_chunk_size': int(os.getenv('EMBEDDING_MIN_CHUNK_SIZE', '100')),
+    'include_descriptions': os.getenv('EMBEDDING_INCLUDE_DESCRIPTIONS', 'true').lower() == 'true',
+    'batch_processing_size': int(os.getenv('EMBEDDING_BATCH_SIZE', '10')),
+    'timestamp_granularity': os.getenv('EMBEDDING_TIMESTAMP_GRANULARITY', 'segment'),  # 'segment' or 'chunk'
+}
+
+# Search Configuration
+SEARCH_CONFIG = {
+    'default_top_k': int(os.getenv('SEARCH_DEFAULT_TOP_K', '10')),
+    'max_top_k': int(os.getenv('SEARCH_MAX_TOP_K', '50')),
+    'similarity_threshold': float(os.getenv('SEARCH_SIMILARITY_THRESHOLD', '0.45')),
+    'timestamp_context_window': int(os.getenv('SEARCH_TIMESTAMP_CONTEXT', '30')),  # seconds
+}
+
+# Validation - Check for required environment variables in production
+if not DEBUG:
+    required_env_vars = {
+        'OPENAI_API_KEY': OPENAI_API_KEY,
+        'PINECONE_API_KEY': PINECONE_CONFIG['api_key'],
+    }
+    
+    missing_vars = [var for var, value in required_env_vars.items() if not value]
+    if missing_vars:
+        raise ValueError(f"Missing required environment variables: {', '.join(missing_vars)}")
