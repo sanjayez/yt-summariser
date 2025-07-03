@@ -5,6 +5,8 @@ from rest_framework import status
 from .utils.get_client_ip import get_client_ip
 from django.http import StreamingHttpResponse
 from .models import URLRequestTable
+from video_processor.tasks import process_youtube_video
+from video_processor.config import validate_youtube_url
 import json
 import time
 
@@ -16,9 +18,14 @@ def summarise_single(request):
     # Get URL from request body
     url = request.data.get('url')
 
-    # TODO: Add more validation for the url like youtube only
     if not url:
         return Response({'error': 'URL is required'}, status=status.HTTP_400_BAD_REQUEST)
+    
+    # Validate YouTube URL format
+    try:
+        validate_youtube_url(url)
+    except ValueError as e:
+        return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
     
     # Prepare data for serializer
     data = {
@@ -31,6 +38,9 @@ def summarise_single(request):
     serializer = URLRequestTableSerializer(data=data)
     if serializer.is_valid():
         url_request = serializer.save()
+        
+        # Trigger video processing
+        process_youtube_video.delay(url_request.id)
         
         # Return response in requested format with request_id
         return Response({
@@ -90,5 +100,4 @@ def status_stream(request, request_id):
     response = StreamingHttpResponse(event_stream(), content_type='text/event-stream')
     response['Cache-Control'] = 'no-cache'
     response['X-Accel-Buffering'] = 'no'  # Disable nginx buffering
-    # Removed Connection: keep-alive header that causes issues with Django dev server
     return response

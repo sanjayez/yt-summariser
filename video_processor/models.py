@@ -25,10 +25,32 @@ class VideoTranscript(models.Model):
     ]
     
     url_request = models.OneToOneField(URLRequestTable, on_delete=models.CASCADE, related_name='video_transcript')
-    transcript_text = models.TextField()
+    transcript_text = models.TextField()  # Plain text for search/summary
+    transcript_data = models.JSONField(null=True, blank=True)  # Structured data with timestamps
     language = models.CharField(max_length=10, default='en')
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='processing')
     created_at = models.DateTimeField(auto_now_add=True)
+    
+    def get_formatted_transcript(self):
+        """Return transcript with clickable timestamps for UI"""
+        if not self.transcript_data:
+            # If no structured data, return a single segment with the full text
+            return 
+        
+        formatted_segments = []
+        for segment in self.transcript_data:
+            start_time = segment.get('start', 0)
+            text = segment.get('text', '')
+            # Format timestamp as MM:SS
+            minutes = int(start_time // 60)
+            seconds = int(start_time % 60)
+            timestamp = f"{minutes:02d}:{seconds:02d}"
+            formatted_segments.append({
+                'timestamp': timestamp,
+                'start_seconds': start_time,
+                'text': text
+            })
+        return formatted_segments
 
 # Helper function to update URLRequestTable status based on related models
 def update_url_request_status(url_request):
