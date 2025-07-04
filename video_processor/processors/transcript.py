@@ -2,6 +2,7 @@ from celery import shared_task
 from youtube_transcript_api import YouTubeTranscriptApi
 from django.db import transaction
 import logging
+import re
 
 from api.models import URLRequestTable
 from ..models import VideoMetadata, VideoTranscript, TranscriptSegment
@@ -13,6 +14,77 @@ from ..utils import (
 )
 
 logger = logging.getLogger(__name__)
+
+def get_language_variants(primary_language):
+    """Get common language variants for a primary language code"""
+    variants = {
+        'en': ['en', 'en-GB', 'en-US', 'en-CA', 'en-AU', 'en-NZ'],
+        'es': ['es', 'es-ES', 'es-MX', 'es-AR', 'es-CO'],
+        'fr': ['fr', 'fr-FR', 'fr-CA'],
+        'de': ['de', 'de-DE', 'de-AT', 'de-CH'],
+        'it': ['it', 'it-IT'],
+        'pt': ['pt', 'pt-BR', 'pt-PT'],
+        'zh': ['zh', 'zh-CN', 'zh-TW', 'zh-HK'],
+        'ja': ['ja', 'ja-JP'],
+        'ko': ['ko', 'ko-KR'],
+        'ru': ['ru', 'ru-RU'],
+        'ar': ['ar', 'ar-SA', 'ar-EG'],
+        'hi': ['hi', 'hi-IN'],
+    }
+    return variants.get(primary_language, [primary_language])
+
+def parse_available_languages(error_message):
+    """Parse available languages from the YouTube transcript API error message"""
+    # Look for lines like: ' - en-GB ("English (United Kingdom)")'
+    pattern = r'- ([a-zA-Z\-]+) \("([^"]+)"\)'
+    matches = re.findall(pattern, error_message)
+    return [match[0] for match in matches]
+
+def extract_transcript_with_fallback(video_id, primary_language='en'):
+    """
+    Extract transcript with language fallback support.
+    Tries primary language variants, then available languages from error message.
+    """
+    # Try primary language variants first
+    language_variants = get_language_variants(primary_language)
+    
+    for lang_code in language_variants:
+        try:
+            logger.info(f"Trying transcript extraction with language: {lang_code}")
+            transcript_data = YouTubeTranscriptApi.get_transcript(video_id, languages=[lang_code])
+            logger.info(f"Successfully extracted transcript using language: {lang_code}")
+            return transcript_data, lang_code
+        except Exception as e:
+            logger.debug(f"Failed to extract transcript with {lang_code}: {e}")
+            continue
+    
+    # If primary variants fail, try to extract available languages from error
+    try:
+        # This will fail, but we want to capture the error message
+        YouTubeTranscriptApi.get_transcript(video_id, languages=[primary_language])
+    except Exception as e:
+        error_message = str(e)
+        available_languages = parse_available_languages(error_message)
+        
+        if available_languages:
+            logger.info(f"Found available languages from error: {available_languages}")
+            
+            # Try each available language
+            for lang_code in available_languages:
+                try:
+                    logger.info(f"Trying available language: {lang_code}")
+                    transcript_data = YouTubeTranscriptApi.get_transcript(video_id, languages=[lang_code])
+                    logger.info(f"Successfully extracted transcript using available language: {lang_code}")
+                    return transcript_data, lang_code
+                except Exception as lang_error:
+                    logger.debug(f"Failed to extract transcript with available language {lang_code}: {lang_error}")
+                    continue
+        
+        # If all attempts fail, re-raise the original error
+        raise e
+    
+    # This shouldn't be reached, but just in case
+    raise Exception(f"No transcripts available for video {video_id}")
 
 # Task 2: Extract Video Transcript
 @shared_task(bind=True,
@@ -57,9 +129,13 @@ def extract_video_transcript(self, metadata_result, url_request_id):
         
         update_task_progress(self, TASK_STATES['EXTRACTING_TRANSCRIPT'], 30)
         
-        # Extract transcript with timeout protection
+        # Extract transcript with timeout protection and language fallback
         with timeout(YOUTUBE_CONFIG['TASK_TIMEOUTS']['transcript_timeout'], "Transcript extraction"):
-            transcript_data = YouTubeTranscriptApi.get_transcript(video_id)
+            # Get the video's detected language or use default
+            detected_language = getattr(video_metadata, 'language', 'en') or 'en'
+            transcript_data, used_language = extract_transcript_with_fallback(video_id, detected_language)
+            
+            logger.info(f"Extracted transcript using language: {used_language}")
         
         # Validate transcript data
         validated_transcript = validate_transcript_data(transcript_data)

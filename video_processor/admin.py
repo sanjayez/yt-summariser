@@ -5,15 +5,36 @@ from .models import VideoMetadata, VideoTranscript, TranscriptSegment
 
 @admin.register(VideoMetadata)
 class VideoMetadataAdmin(admin.ModelAdmin):
-    list_display = ['video_id', 'title', 'channel_name', 'duration', 'view_count', 'status', 'created_at']
-    list_filter = ['status', 'created_at']
-    search_fields = ['video_id', 'title', 'channel_name']
-    readonly_fields = ['created_at']
+    list_display = ['video_id', 'title', 'channel_name', 'duration', 'view_count', 'like_count', 'language', 'upload_date', 'channel_is_verified', 'status', 'created_at']
+    list_filter = ['status', 'language', 'channel_is_verified', 'upload_date', 'created_at']
+    search_fields = ['video_id', 'title', 'channel_name', 'channel_id', 'uploader_id']
+    readonly_fields = ['created_at', 'duration_string', 'webpage_url']
+    
+    fieldsets = (
+        ('Basic Info', {
+            'fields': ('video_id', 'title', 'description', 'duration', 'duration_string', 'language', 'upload_date')
+        }),
+        ('Channel Info', {
+            'fields': ('channel_name', 'channel_id', 'uploader_id', 'channel_follower_count', 'channel_is_verified')
+        }),
+        ('Engagement', {
+            'fields': ('view_count', 'like_count')
+        }),
+        ('Media', {
+            'fields': ('thumbnail', 'webpage_url')
+        }),
+        ('Categorization', {
+            'fields': ('tags', 'categories')
+        }),
+        ('System', {
+            'fields': ('status', 'created_at')
+        }),
+    )
 
 @admin.register(VideoTranscript)
 class VideoTranscriptAdmin(admin.ModelAdmin):
-    list_display = ['video_metadata', 'language', 'status', 'transcript_preview', 'segments_count', 'created_at']
-    list_filter = ['status', 'language', 'created_at']
+    list_display = ['video_metadata', 'video_language', 'status', 'transcript_preview', 'segments_count', 'created_at']
+    list_filter = ['status', 'video_metadata__language', 'created_at']
     readonly_fields = ['created_at']
     
     def transcript_preview(self, obj):
@@ -23,6 +44,10 @@ class VideoTranscriptAdmin(admin.ModelAdmin):
     def segments_count(self, obj):
         return obj.segments.count()
     segments_count.short_description = 'Segments'
+    
+    def video_language(self, obj):
+        return obj.video_metadata.language if obj.video_metadata else 'N/A'
+    video_language.short_description = 'Language'
 
 @admin.register(TranscriptSegment)
 class TranscriptSegmentAdmin(admin.ModelAdmin):

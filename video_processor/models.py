@@ -15,8 +15,37 @@ class VideoMetadata(models.Model):
     duration = models.IntegerField(null=True, blank=True)  # in seconds
     channel_name = models.CharField(max_length=200, blank=True)
     view_count = models.BigIntegerField(null=True, blank=True)
+    
+    # New fields from YouTube API
+    upload_date = models.DateField(null=True, blank=True, help_text="When video was published")
+    language = models.CharField(max_length=10, null=True, blank=True, default='en', help_text="Primary language of the video")
+    like_count = models.BigIntegerField(null=True, blank=True, help_text="Number of likes")
+    channel_id = models.CharField(max_length=50, blank=True, help_text="YouTube channel ID")
+    tags = models.JSONField(default=list, blank=True, help_text="Video tags for categorization")
+    categories = models.JSONField(default=list, blank=True, help_text="YouTube categories")
+    thumbnail = models.URLField(blank=True, help_text="Video thumbnail URL")
+    channel_follower_count = models.BigIntegerField(null=True, blank=True, help_text="Channel subscriber count")
+    channel_is_verified = models.BooleanField(default=False, help_text="Whether channel is verified")
+    uploader_id = models.CharField(max_length=100, blank=True, help_text="Channel handle (e.g., '@TEDx')")
+    
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='processing')
     created_at = models.DateTimeField(auto_now_add=True)
+    
+    @property
+    def duration_string(self):
+        """Return human-readable duration (MM:SS format)"""
+        if not self.duration:
+            return "0:00"
+        minutes = self.duration // 60
+        seconds = self.duration % 60
+        return f"{minutes}:{seconds:02d}"
+    
+    @property
+    def webpage_url(self):
+        """Return direct YouTube URL"""
+        if self.video_id:
+            return f"https://www.youtube.com/watch?v={self.video_id}"
+        return ""
 
 class VideoTranscript(models.Model):
     STATUS_CHOICES = [
@@ -30,7 +59,6 @@ class VideoTranscript(models.Model):
     # Old relationship (keep temporarily for migration)
     url_request = models.OneToOneField(URLRequestTable, on_delete=models.CASCADE, related_name='video_transcript_old', null=True, blank=True)
     transcript_text = models.TextField()  # Plain text for search/summary - only field needed for summaries
-    language = models.CharField(max_length=10, default='en')
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='processing')
     created_at = models.DateTimeField(auto_now_add=True)
     

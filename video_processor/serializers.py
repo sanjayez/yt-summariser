@@ -2,20 +2,37 @@ from rest_framework import serializers
 from .models import VideoMetadata, VideoTranscript
 
 class VideoMetadataSerializer(serializers.ModelSerializer):
+    # Add computed properties
+    duration_string = serializers.ReadOnlyField()
+    webpage_url = serializers.ReadOnlyField()
+    
     class Meta:
         model = VideoMetadata
         fields = [
             'id',
             'url_request',
+            'video_id',
             'title',
             'description',
             'duration',
+            'duration_string',
             'channel_name',
             'view_count',
+            'upload_date',
+            'language',
+            'like_count',
+            'channel_id',
+            'tags',
+            'categories',
+            'thumbnail',
+            'channel_follower_count',
+            'channel_is_verified',
+            'uploader_id',
+            'webpage_url',
             'status',
             'created_at'
         ]
-        read_only_fields = ['id', 'created_at']
+        read_only_fields = ['id', 'created_at', 'duration_string', 'webpage_url']
 
     def validate_duration(self, value):
         """
@@ -37,6 +54,8 @@ class VideoTranscriptSerializer(serializers.ModelSerializer):
     formatted_transcript = serializers.SerializerMethodField()
     # Include segments data for backward compatibility
     transcript_data = serializers.SerializerMethodField()
+    # Get language from video metadata
+    language = serializers.SerializerMethodField()
     
     class Meta:
         model = VideoTranscript
@@ -45,12 +64,12 @@ class VideoTranscriptSerializer(serializers.ModelSerializer):
             'url_request',
             'transcript_text',
             'transcript_data',  # Now computed from segments
-            'language',
+            'language',  # Now from video_metadata
             'status',
             'created_at',
             'formatted_transcript'
         ]
-        read_only_fields = ['id', 'created_at', 'formatted_transcript', 'transcript_data']
+        read_only_fields = ['id', 'created_at', 'formatted_transcript', 'transcript_data', 'language']
     
     def get_formatted_transcript(self, obj):
         """Return formatted transcript for UI consumption"""
@@ -69,13 +88,9 @@ class VideoTranscriptSerializer(serializers.ModelSerializer):
                 'duration': segment.duration
             })
         return segments_data
-
-    def validate_language(self, value):
-        """
-        Validate language code (basic check)
-        """
-        if value and len(value) > 10:  # Most language codes are 2-5 chars
-            raise serializers.ValidationError("Invalid language code format")
-        return value.lower()  # Store language codes in lowercase
-
- 
+    
+    def get_language(self, obj):
+        """Get language from related VideoMetadata"""
+        if obj.video_metadata and obj.video_metadata.language:
+            return obj.video_metadata.language
+        return 'en'  # Default fallback
