@@ -1,10 +1,9 @@
-from django.shortcuts import render
 from rest_framework import status
 from rest_framework.decorators import api_view
 from rest_framework.response import Response
 from api.models import URLRequestTable
 from .models import VideoTranscript
-from .serializer import VideoTranscriptSerializer
+from .serializers import VideoTranscriptSerializer
 
 # Create your views here.
 

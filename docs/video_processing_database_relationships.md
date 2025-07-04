@@ -21,6 +21,8 @@ Each Row from URLRequestTable is mapped to a row in VideoMetadata and VideoTrans
 
 ---
 
+`celery -A yt_summariser worker --loglevel=info`
+
 ## Models
 
 ### 1. `URLRequestTable` (`api/models.py`)

@@ -6,7 +6,7 @@ from .utils.get_client_ip import get_client_ip
 from django.http import StreamingHttpResponse
 from .models import URLRequestTable
 from video_processor.tasks import process_youtube_video
-from video_processor.config import validate_youtube_url
+from video_processor.validators import validate_youtube_url
 import json
 import time
 

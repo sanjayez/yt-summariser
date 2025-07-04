@@ -86,4 +86,4 @@ class VideoTranscriptSerializer(serializers.ModelSerializer):
                 except (ValueError, TypeError):
                     raise serializers.ValidationError(f"Segment {i} 'start' must be a number")
         
-        return value
+        return value 
