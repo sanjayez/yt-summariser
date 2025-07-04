@@ -49,6 +49,7 @@ def extract_video_metadata(self, url_request_id):
             metadata_obj, created = VideoMetadata.objects.get_or_create(
                 url_request=url_request,
                 defaults={
+                    'video_id': validated_info.get('id'),
                     'title': validated_info.get('title', ''),
                     'description': validated_info.get('description', ''),
                     'duration': validated_info.get('duration'),
@@ -60,6 +61,7 @@ def extract_video_metadata(self, url_request_id):
             
             # Update metadata if it already existed
             if not created:
+                metadata_obj.video_id = validated_info.get('id')
                 metadata_obj.title = validated_info.get('title', '')
                 metadata_obj.description = validated_info.get('description', '')
                 metadata_obj.duration = validated_info.get('duration')

@@ -75,9 +75,9 @@ def status_stream(request, request_id):
                     metadata = url_request.video_metadata
                     data['metadata_status'] = metadata.status
                 
-                # Add transcript details if exists
-                if hasattr(url_request, 'video_transcript'):
-                    transcript = url_request.video_transcript
+                # Add transcript details if exists through VideoMetadata
+                if hasattr(url_request, 'video_metadata') and hasattr(url_request.video_metadata, 'video_transcript'):
+                    transcript = url_request.video_metadata.video_transcript
                     data['transcript_status'] = transcript.status
                 
                 # Send data

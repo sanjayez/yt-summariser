@@ -46,13 +46,21 @@ def get_transcript_with_timestamps(request, request_id):
     try:
         url_request = URLRequestTable.objects.get(request_id=request_id)
         
-        if not hasattr(url_request, 'video_transcript'):
+        # Check if VideoMetadata exists
+        if not hasattr(url_request, 'video_metadata'):
+            return Response(
+                {'error': 'Video metadata not found for this request'}, 
+                status=status.HTTP_404_NOT_FOUND
+            )
+        
+        # Check if VideoTranscript exists through VideoMetadata
+        if not hasattr(url_request.video_metadata, 'video_transcript'):
             return Response(
                 {'error': 'Transcript not found for this request'}, 
                 status=status.HTTP_404_NOT_FOUND
             )
         
-        transcript = url_request.video_transcript
+        transcript = url_request.video_metadata.video_transcript
         
         if transcript.status != 'success':
             return Response(

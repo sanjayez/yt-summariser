@@ -27,7 +27,7 @@ def update_overall_status(self, transcript_result, url_request_id):
         update_task_progress(self, TASK_STATES['UPDATING_STATUS'], 50)
         
         # Optimized query with select_related
-        url_request = URLRequestTable.objects.select_related('video_metadata', 'video_transcript').get(id=url_request_id)
+        url_request = URLRequestTable.objects.select_related('video_metadata__video_transcript').get(id=url_request_id)
         
         logger.info(f"Updating overall status for request {url_request_id}")
         
@@ -42,7 +42,7 @@ def update_overall_status(self, transcript_result, url_request_id):
         update_task_progress(self, TASK_STATES['COMPLETED'], 100, {
             'final_status': url_request.status,
             'has_metadata': hasattr(url_request, 'video_metadata'),
-            'has_transcript': hasattr(url_request, 'video_transcript'),
+            'has_transcript': hasattr(url_request, 'video_metadata') and hasattr(url_request.video_metadata, 'video_transcript'),
         })
         
         logger.info(f"Final status for request {url_request_id}: {url_request.status}")
@@ -50,7 +50,7 @@ def update_overall_status(self, transcript_result, url_request_id):
         result = {
             'status': url_request.status,
             'metadata_status': getattr(url_request.video_metadata, 'status', None) if hasattr(url_request, 'video_metadata') else None,
-            'transcript_status': getattr(url_request.video_transcript, 'status', None) if hasattr(url_request, 'video_transcript') else None,
+            'transcript_status': getattr(url_request.video_metadata.video_transcript, 'status', None) if hasattr(url_request, 'video_metadata') and hasattr(url_request.video_metadata, 'video_transcript') else None,
             'transcript_segments': transcript_result.get('transcript_segments', 0) if isinstance(transcript_result, dict) else 0
         }
         

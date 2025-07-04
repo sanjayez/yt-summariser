@@ -73,8 +73,8 @@ def handle_dead_letter_task(task_name, task_id, args, kwargs, exception):
         extra={
             'task_id': task_id,
             'task_name': task_name,
-            'args': args,
-            'kwargs': kwargs,
+            'task_args': args,  # Renamed to avoid LogRecord conflict
+            'task_kwargs': kwargs,  # Renamed for consistency
             'exception': str(exception),
             'exception_type': type(exception).__name__
         }
@@ -85,8 +85,8 @@ def handle_dead_letter_task(task_name, task_id, args, kwargs, exception):
     dead_letter_data = {
         'task_name': task_name,
         'task_id': task_id,
-        'args': args,
-        'kwargs': kwargs,
+        'task_args': args,  # Renamed for consistency
+        'task_kwargs': kwargs,  # Renamed for consistency
         'exception': str(exception),
         'exception_type': type(exception).__name__,
         'timestamp': str(timezone.now())
@@ -113,13 +113,22 @@ def atomic_with_callback(callback_func, *callback_args, **callback_kwargs):
 # Progress Tracking
 def update_task_progress(task_instance, step, progress_percent, meta=None):
     """Update task progress for monitoring"""
+    # Skip progress updates if task doesn't have a valid ID (e.g., when called directly)
+    if not hasattr(task_instance, 'request') or not task_instance.request.id:
+        logger.debug(f"Skipping progress update for {step} - no valid task ID")
+        return
+    
     meta_data = {
         'step': step,
         'progress': progress_percent,
         **(meta or {})
     }
     
-    task_instance.update_state(
-        state='PROGRESS',
-        meta=meta_data
-    ) 
+    try:
+        task_instance.update_state(
+            state='PROGRESS',
+            meta=meta_data
+        )
+    except Exception as e:
+        logger.warning(f"Failed to update task progress: {e}")
+        # Don't raise the exception, just log it

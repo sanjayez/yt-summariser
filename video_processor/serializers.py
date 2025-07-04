@@ -35,6 +35,8 @@ class VideoMetadataSerializer(serializers.ModelSerializer):
 
 class VideoTranscriptSerializer(serializers.ModelSerializer):
     formatted_transcript = serializers.SerializerMethodField()
+    # Include segments data for backward compatibility
+    transcript_data = serializers.SerializerMethodField()
     
     class Meta:
         model = VideoTranscript
@@ -42,17 +44,31 @@ class VideoTranscriptSerializer(serializers.ModelSerializer):
             'id',
             'url_request',
             'transcript_text',
-            'transcript_data',
+            'transcript_data',  # Now computed from segments
             'language',
             'status',
             'created_at',
             'formatted_transcript'
         ]
-        read_only_fields = ['id', 'created_at', 'formatted_transcript']
+        read_only_fields = ['id', 'created_at', 'formatted_transcript', 'transcript_data']
     
     def get_formatted_transcript(self, obj):
         """Return formatted transcript for UI consumption"""
         return obj.get_formatted_transcript()
+    
+    def get_transcript_data(self, obj):
+        """Generate transcript data from segments for backward compatibility"""
+        if not hasattr(obj, 'segments') or not obj.segments.exists():
+            return []
+        
+        segments_data = []
+        for segment in obj.segments.all():
+            segments_data.append({
+                'start': segment.start_time,
+                'text': segment.text,
+                'duration': segment.duration
+            })
+        return segments_data
 
     def validate_language(self, value):
         """
@@ -62,28 +78,4 @@ class VideoTranscriptSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError("Invalid language code format")
         return value.lower()  # Store language codes in lowercase
 
-    def validate_transcript_data(self, value):
-        """
-        Validate transcript data structure
-        """
-        if value is not None:
-            if not isinstance(value, list):
-                raise serializers.ValidationError("Transcript data must be a list")
-            
-            # Validate each segment has required fields
-            for i, segment in enumerate(value):
-                if not isinstance(segment, dict):
-                    raise serializers.ValidationError(f"Segment {i} must be a dictionary")
-                
-                if 'text' not in segment:
-                    raise serializers.ValidationError(f"Segment {i} missing 'text' field")
-                
-                if 'start' not in segment:
-                    raise serializers.ValidationError(f"Segment {i} missing 'start' field")
-                
-                try:
-                    float(segment['start'])
-                except (ValueError, TypeError):
-                    raise serializers.ValidationError(f"Segment {i} 'start' must be a number")
-        
-        return value 
+ 

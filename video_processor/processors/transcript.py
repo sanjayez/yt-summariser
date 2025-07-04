@@ -4,7 +4,7 @@ from django.db import transaction
 import logging
 
 from api.models import URLRequestTable
-from ..models import VideoTranscript
+from ..models import VideoMetadata, VideoTranscript, TranscriptSegment
 from ..config import YOUTUBE_CONFIG, TASK_STATES
 from ..validators import validate_transcript_data
 from ..utils import (
@@ -24,6 +24,7 @@ logger = logging.getLogger(__name__)
 def extract_video_transcript(self, metadata_result, url_request_id):
     """
     Atomic task: Extract transcript with timeout protection and validation.
+    Creates transcript segments with meaningful IDs for vector embedding.
     """
     try:
         video_id = metadata_result.get('video_id') if isinstance(metadata_result, dict) else None
@@ -33,15 +34,17 @@ def extract_video_transcript(self, metadata_result, url_request_id):
         
         update_task_progress(self, TASK_STATES['EXTRACTING_TRANSCRIPT'], 10)
         
-        # Optimized query
-        url_request = URLRequestTable.objects.select_related('video_transcript').get(id=url_request_id)
+        # Get VideoMetadata object
+        video_metadata = VideoMetadata.objects.select_related('video_transcript').get(
+            url_request__id=url_request_id
+        )
         
         logger.info(f"Extracting transcript for video {video_id}")
         
         # Create transcript object with transaction
         with transaction.atomic():
             transcript_obj, created = VideoTranscript.objects.get_or_create(
-                url_request=url_request,
+                video_metadata=video_metadata,
                 defaults={
                     'transcript_text': '',
                     'status': 'processing'
@@ -64,19 +67,46 @@ def extract_video_transcript(self, metadata_result, url_request_id):
         
         update_task_progress(self, TASK_STATES['EXTRACTING_TRANSCRIPT'], 70)
         
-        # Save with transaction
+        # Save with transaction and create segments
         with transaction.atomic():
             transcript_obj.transcript_text = transcript_text
-            transcript_obj.transcript_data = validated_transcript
             transcript_obj.status = 'success'
             transcript_obj.save()
+            
+            # Create transcript segments with meaningful IDs
+            segments_created = []
+            for i, segment_data in enumerate(validated_transcript):
+                segment_id = f"{video_id}_{i+1:03d}"  # e.g., "dQw4w9WgXcQ_001"
+                
+                # Calculate duration (next segment's start - current start, or use default)
+                if i+1 < len(validated_transcript):
+                    duration = validated_transcript[i+1]['start'] - segment_data['start']
+                else:
+                    duration = segment_data.get('duration', 5)  # Default 5 seconds for last segment
+                
+                segment_obj, created = TranscriptSegment.objects.get_or_create(
+                    transcript=transcript_obj,
+                    sequence_number=i+1,
+                    defaults={
+                        'segment_id': segment_id,
+                        'start_time': segment_data['start'],
+                        'duration': duration,
+                        'text': segment_data['text'],
+                        'is_embedded': False,
+                    }
+                )
+                
+                if created:
+                    segments_created.append(segment_id)
         
         update_task_progress(self, TASK_STATES['EXTRACTING_TRANSCRIPT'], 100)
         
         logger.info(f"Successfully extracted transcript with {len(validated_transcript)} segments")
+        logger.info(f"Created {len(segments_created)} transcript segments with IDs: {segments_created[:5]}...")
         
         return {
             'transcript_segments': len(validated_transcript),
+            'segments_created': len(segments_created),
             'video_title': metadata_result.get('title', 'Unknown') if isinstance(metadata_result, dict) else 'Unknown'
         }
         
@@ -86,9 +116,9 @@ def extract_video_transcript(self, metadata_result, url_request_id):
         # Mark transcript as failed but don't stop the chain
         with transaction.atomic():
             try:
-                url_request = URLRequestTable.objects.get(id=url_request_id)
+                video_metadata = VideoMetadata.objects.get(url_request__id=url_request_id)
                 VideoTranscript.objects.update_or_create(
-                    url_request=url_request,
+                    video_metadata=video_metadata,
                     defaults={
                         'transcript_text': '',
                         'status': 'failed'
@@ -102,4 +132,4 @@ def extract_video_transcript(self, metadata_result, url_request_id):
             handle_dead_letter_task('extract_video_transcript', self.request.id, [url_request_id], {}, e)
         
         # Return empty result but don't break the chain (graceful degradation)
-        return {'transcript_segments': 0, 'video_title': 'Unknown', 'error': str(e)} 
+        return {'transcript_segments': 0, 'segments_created': 0, 'video_title': 'Unknown', 'error': str(e)} 

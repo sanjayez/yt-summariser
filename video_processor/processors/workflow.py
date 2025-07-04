@@ -19,7 +19,7 @@ def process_youtube_video(self, url_request_id):
     """
     try:
         # Validate input
-        url_request = URLRequestTable.objects.select_related('video_metadata', 'video_transcript').get(id=url_request_id)
+        url_request = URLRequestTable.objects.select_related('video_metadata__video_transcript').get(id=url_request_id)
         
         # Validate URL
         validate_youtube_url(url_request.url)
