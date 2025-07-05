@@ -28,6 +28,9 @@ class VideoMetadata(models.Model):
     channel_is_verified = models.BooleanField(default=False, help_text="Whether channel is verified")
     uploader_id = models.CharField(max_length=100, blank=True, help_text="Channel handle (e.g., '@TEDx')")
     
+    # Vector embedding tracking
+    is_embedded = models.BooleanField(default=False, help_text="Whether video metadata has been embedded in vector store")
+    
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='processing')
     created_at = models.DateTimeField(auto_now_add=True)
     
@@ -59,6 +62,11 @@ class VideoTranscript(models.Model):
     # Old relationship (keep temporarily for migration)
     url_request = models.OneToOneField(URLRequestTable, on_delete=models.CASCADE, related_name='video_transcript_old', null=True, blank=True)
     transcript_text = models.TextField()  # Plain text for search/summary - only field needed for summaries
+    
+    # AI-generated summary fields
+    summary = models.TextField(blank=True, null=True, help_text="AI-generated summary of the video content")
+    key_points = models.JSONField(default=list, blank=True, help_text="List of key points extracted from the video")
+    
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='processing')
     created_at = models.DateTimeField(auto_now_add=True)
     

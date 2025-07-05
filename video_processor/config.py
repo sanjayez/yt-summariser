@@ -41,7 +41,9 @@ YOUTUBE_CONFIG = {
 # Task State Tracking
 TASK_STATES = {
     'EXTRACTING_METADATA': 'extracting_metadata',
-    'EXTRACTING_TRANSCRIPT': 'extracting_transcript', 
+    'EXTRACTING_TRANSCRIPT': 'extracting_transcript',
+    'GENERATING_SUMMARY': 'generating_summary',
+    'EMBEDDING_CONTENT': 'embedding_content',
     'UPDATING_STATUS': 'updating_status',
     'COMPLETED': 'completed',
     'FAILED_PERMANENTLY': 'failed_permanently'
