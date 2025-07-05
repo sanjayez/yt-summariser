@@ -125,10 +125,10 @@ def update_task_progress(task_instance, step, progress_percent, meta=None):
     }
     
     try:
-        task_instance.update_state(
-            state='PROGRESS',
-            meta=meta_data
-        )
+    task_instance.update_state(
+        state='PROGRESS',
+        meta=meta_data
+    ) 
     except Exception as e:
         logger.warning(f"Failed to update task progress: {e}")
         # Don't raise the exception, just log it

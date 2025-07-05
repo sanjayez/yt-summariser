@@ -45,4 +45,4 @@ TASK_STATES = {
     'UPDATING_STATUS': 'updating_status',
     'COMPLETED': 'completed',
     'FAILED_PERMANENTLY': 'failed_permanently'
-} 
+}
