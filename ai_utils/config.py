@@ -35,10 +35,12 @@ class OpenAIConfig(BaseModel):
 class PineconeConfig(BaseModel):
     """Pinecone configuration settings"""
     api_key: str = Field(..., description="Pinecone API key")
-    environment: str = Field(..., description="Pinecone environment (e.g., 'gcp-starter')")
+    environment: str = Field(..., description="Pinecone environment (e.g., 'aws-starter')")
     index_name: str = Field(default="youtube-transcripts", description="Default index name")
     dimension: int = Field(default=3072, description="Vector dimension (for text-embedding-3-large)")
     metric: str = Field(default="cosine", description="Distance metric for similarity")
+    cloud: str = Field(default="aws", description="Cloud provider (aws or gcp)")
+    region: str = Field(default="us-east-1", description="Cloud region")
 
 class LlamaIndexConfig(BaseModel):
     """LlamaIndex configuration settings"""
@@ -81,10 +83,12 @@ class AIConfig(BaseModel):
             ),
             pinecone=PineconeConfig(
                 api_key=os.getenv("PINECONE_API_KEY", ""),
-                environment=os.getenv("PINECONE_ENVIRONMENT", "gcp-starter"),
+                environment=os.getenv("PINECONE_ENVIRONMENT", "aws-starter"),
                 index_name=os.getenv("PINECONE_INDEX_NAME", "youtube-transcripts"),
                 dimension=int(os.getenv("PINECONE_DIMENSION", "3072")),
-                metric=os.getenv("PINECONE_METRIC", "cosine")
+                metric=os.getenv("PINECONE_METRIC", "cosine"),
+                cloud=os.getenv("PINECONE_CLOUD", "aws"),
+                region=os.getenv("PINECONE_REGION", "us-east-1")
             ),
             llamaindex=LlamaIndexConfig(
                 chunk_size=int(os.getenv("LLAMAINDEX_CHUNK_SIZE", "512")),

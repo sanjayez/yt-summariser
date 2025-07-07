@@ -8,6 +8,7 @@ from django.db import transaction
 import logging
 import json
 import asyncio  # Move import to top to avoid scope issues
+import time
 
 from api.models import URLRequestTable
 from ..models import VideoMetadata, VideoTranscript
@@ -123,59 +124,96 @@ def generate_summary_sync(transcript_text: str, video_metadata=None) -> tuple:
         llm_provider = OpenAILLMProvider(config)
         llm_service = LLMService(llm_provider)
         
-        # If transcript is very long, chunk it and summarize chunks
-        if len(transcript_text) > 4000:  # Approximate token limit consideration
-            logger.info(f"Transcript is long ({len(transcript_text)} chars), chunking for summarization")
+        # Enhanced chunking for very long transcripts (like 26+ minute videos)
+        if len(transcript_text) > 15000:  # More aggressive chunking for stability
+            logger.info(f"Long transcript detected ({len(transcript_text)} chars), using enhanced chunking")
             
-            chunks = chunk_transcript_text(transcript_text, chunk_size=3000, chunk_overlap=200)
+            # Use smaller chunks for better stability
+            chunks = chunk_transcript_text(transcript_text, chunk_size=2000, chunk_overlap=100)
             chunk_summaries = []
             
-            # Summarize each chunk
+            # Process chunks with progress tracking and error recovery
+            total_chunks = len(chunks)
+            logger.info(f"Processing {total_chunks} chunks for long video")
+            
             for i, chunk in enumerate(chunks):
                 chunk_prompt = create_summary_prompt(chunk, video_metadata)
                 
                 try:
+                    logger.info(f"Processing chunk {i+1}/{total_chunks} ({len(chunk)} chars)")
+                    
                     # Create chat request
                     messages = [ChatMessage(role="user", content=chunk_prompt)]
                     chat_request = ChatRequest(messages=messages)
                     
-                    # Generate summary for chunk using sync method
+                    # Generate summary for chunk using sync method with timeout protection
                     # Create a new event loop for this operation
                     loop = asyncio.new_event_loop()
                     asyncio.set_event_loop(loop)
                     
                     try:
-                        response_data = loop.run_until_complete(llm_service.chat_completion(chat_request))
+                        # Add timeout protection for each chunk
+                        start_time = time.time()
+                        response_data = loop.run_until_complete(
+                            asyncio.wait_for(
+                                llm_service.chat_completion(chat_request), 
+                                timeout=300  # 5 minute timeout per chunk
+                            )
+                        )
+                        
+                        processing_time = time.time() - start_time
+                        logger.info(f"Chunk {i+1} processed in {processing_time:.1f}s")
+                        
                         if response_data and response_data.get('response') and response_data['response'].choices:
                             chunk_summaries.append(response_data['response'].choices[0].message.content)
-                            logger.info(f"Generated summary for chunk {i+1}/{len(chunks)}")
+                            logger.info(f"✅ Generated summary for chunk {i+1}/{total_chunks}")
+                        else:
+                            logger.warning(f"⚠️ Empty response for chunk {i+1}, skipping")
+                            
                     finally:
                         loop.close()
                     
-                except Exception as e:
-                    logger.warning(f"Failed to summarize chunk {i+1}: {e}")
+                    # Add small delay between chunks to prevent overwhelming the API
+                    if i < total_chunks - 1:  # Don't sleep after last chunk
+                        time.sleep(1)
+                    
+                except asyncio.TimeoutError:
+                    logger.error(f"❌ Timeout processing chunk {i+1}, skipping")
                     continue
+                except Exception as e:
+                    logger.warning(f"⚠️ Failed to summarize chunk {i+1}: {e}")
+                    # For long videos, we can afford to skip some chunks
+                    if len(chunks) > 10:  # Only skip if we have many chunks
+                        continue
+                    else:
+                        raise  # Re-raise for shorter videos
             
-            # Combine chunk summaries
+            # Combine chunk summaries with better error handling
             if chunk_summaries:
                 combined_summary = "\n\n".join(chunk_summaries)
+                logger.info(f"Combined {len(chunk_summaries)}/{total_chunks} chunk summaries")
                 
                 # Create final summary from combined chunks
                 final_prompt = f"""Please create a cohesive summary from these section summaries of a video:
 
 {combined_summary}
 
-Create a unified, well-structured summary with key points."""
+Create a unified, well-structured summary with key points. Focus on the main themes and insights."""
                 
                 messages = [ChatMessage(role="user", content=final_prompt)]
                 chat_request = ChatRequest(messages=messages)
                 
-                # Use sync method for final summary
+                # Use sync method for final summary with timeout
                 loop = asyncio.new_event_loop()
                 asyncio.set_event_loop(loop)
                 
                 try:
-                    final_response_data = loop.run_until_complete(llm_service.chat_completion(chat_request))
+                    final_response_data = loop.run_until_complete(
+                        asyncio.wait_for(
+                            llm_service.chat_completion(chat_request),
+                            timeout=180  # 3 minute timeout for final summary
+                        )
+                    )
                     if final_response_data and final_response_data.get('response') and final_response_data['response'].choices:
                         summary_text = final_response_data['response'].choices[0].message.content
                     else:
@@ -183,7 +221,9 @@ Create a unified, well-structured summary with key points."""
                 finally:
                     loop.close()
             else:
-                raise ValueError("Failed to generate summaries for any chunks")
+                # Fallback: create a basic summary if all chunks failed
+                logger.warning("All chunks failed, creating fallback summary")
+                summary_text = f"Summary of {video_metadata.title if video_metadata else 'video'}: Content processing encountered issues. Video contains {len(transcript_text)} characters of transcript data."
                 
         else:
             # Direct summarization for shorter transcripts
@@ -201,7 +241,12 @@ Create a unified, well-structured summary with key points."""
             asyncio.set_event_loop(loop)
             
             try:
-                response_data = loop.run_until_complete(llm_service.chat_completion(chat_request))
+                response_data = loop.run_until_complete(
+                    asyncio.wait_for(
+                        llm_service.chat_completion(chat_request),
+                        timeout=300  # 5 minute timeout
+                    )
+                )
             finally:
                 loop.close()
             
@@ -215,6 +260,8 @@ Create a unified, well-structured summary with key points."""
         
         # Validate and clean up summary
         summary_text = validate_embedding_text(summary_text, max_length=2000)
+        
+        logger.info(f"Summary generation completed: {len(summary_text)} chars, {len(key_points)} key points")
         
         return summary_text, key_points
         

@@ -16,6 +16,9 @@ from dotenv import load_dotenv
 
 # Fix for macOS fork safety issue with multiprocessing
 os.environ['OBJC_DISABLE_INITIALIZE_FORK_SAFETY'] = 'YES'
+# Additional macOS stability fixes
+os.environ['PYTHONHASHSEED'] = '0'
+os.environ['PYTHONUNBUFFERED'] = '1'
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -143,6 +146,22 @@ CELERY_ACCEPT_CONTENT = ['json']
 CELERY_TASK_SERIALIZER = 'json'
 CELERY_RESULT_SERIALIZER = 'json'
 
+# Enhanced Celery configuration for macOS stability and long-running tasks
+CELERY_WORKER_PREFETCH_MULTIPLIER = 1  # Process one task at a time
+CELERY_WORKER_MAX_TASKS_PER_CHILD = 10  # Restart workers after 10 tasks to prevent memory leaks
+CELERY_WORKER_MAX_MEMORY_PER_CHILD = 200000  # 200MB memory limit per worker
+CELERY_TASK_SOFT_TIME_LIMIT = 1800  # 30 minutes soft limit
+CELERY_TASK_TIME_LIMIT = 2100  # 35 minutes hard limit
+CELERY_TASK_REJECT_ON_WORKER_LOST = True  # Reject tasks when worker dies
+CELERY_TASK_ACKS_LATE = True  # Only acknowledge tasks after completion
+CELERY_WORKER_DISABLE_RATE_LIMITS = True  # Disable rate limiting for long tasks
+
+# macOS specific worker settings
+CELERY_WORKER_POOL = 'solo'  # Use solo pool for macOS (more stable than fork)
+CELERY_WORKER_CONCURRENCY = 1  # Single worker for stability
+CELERY_BROKER_CONNECTION_RETRY_ON_STARTUP = True
+CELERY_BROKER_CONNECTION_RETRY = True
+
 # CORS settings
 CORS_ALLOWED_ORIGINS = [
     "http://127.0.0.1:5500",
@@ -188,8 +207,8 @@ OPENAI_CONFIG = {
 # Pinecone Configuration
 PINECONE_CONFIG = {
     'api_key': os.getenv('PINECONE_API_KEY'),
-    'environment': os.getenv('PINECONE_ENVIRONMENT', 'us-east-1-aws'),
-    'index_name': os.getenv('PINECONE_INDEX_NAME', 'yt-summariser'),
+    'environment': os.getenv('PINECONE_ENVIRONMENT', 'aws-starter'),
+    'index_name': os.getenv('PINECONE_INDEX_NAME', 'youtube-transcripts'),
     'dimension': int(os.getenv('PINECONE_DIMENSION', '3072')),  # text-embedding-3-large dimension
     'metric': os.getenv('PINECONE_METRIC', 'cosine'),
     'cloud': os.getenv('PINECONE_CLOUD', 'aws'),

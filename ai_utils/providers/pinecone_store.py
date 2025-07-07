@@ -66,17 +66,21 @@ class PineconeVectorStoreProvider(VectorStoreProvider):
             metric = self.config.pinecone.metric
             
             # Create index with serverless spec for free tier
+            # Use cloud and region from config instead of hardcoded values
+            cloud = getattr(self.config.pinecone, 'cloud', 'aws')
+            region = getattr(self.config.pinecone, 'region', 'us-east-1')
+            
             self.client.create_index(
                 name=index_name,
                 dimension=dimension,
                 metric=metric,
                 spec=ServerlessSpec(
-                    cloud="gcp",
-                    region="us-central1"
+                    cloud=cloud,
+                    region=region
                 )
             )
             
-            logger.info(f"Created Pinecone index: {index_name} (dimension: {dimension}, metric: {metric})")
+            logger.info(f"Created Pinecone index: {index_name} (dimension: {dimension}, metric: {metric}, cloud: {cloud}, region: {region})")
             
         except Exception as e:
             logger.error(f"Failed to create index {index_name}: {str(e)}")
@@ -276,17 +280,21 @@ class PineconeVectorStoreProvider(VectorStoreProvider):
             True if successful, False otherwise
         """
         try:
+            # Use cloud and region from config instead of hardcoded values
+            cloud = getattr(self.config.pinecone, 'cloud', 'aws')
+            region = getattr(self.config.pinecone, 'region', 'us-east-1')
+            
             self.client.create_index(
                 name=config.name,
                 dimension=config.dimension,
                 metric=config.metric,
                 spec=ServerlessSpec(
-                    cloud="aws",
-                    region="us-west-2"
+                    cloud=cloud,
+                    region=region
                 )
             )
             
-            logger.info(f"Created Pinecone index: {config.name}")
+            logger.info(f"Created Pinecone index: {config.name} (cloud: {cloud}, region: {region})")
             return True
             
         except Exception as e:
