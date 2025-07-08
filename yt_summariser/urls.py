@@ -21,4 +21,5 @@ urlpatterns = [
     path('admin/', admin.site.urls),
     path('api/', include('api.urls')),
     path('video/', include('video_processor.urls')),
+    path('api/topic/', include('topic.urls')),
 ]

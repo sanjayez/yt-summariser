@@ -53,6 +53,7 @@ INSTALLED_APPS = [
     'rest_framework',
     'api',
     'video_processor',
+    'topic',
 ]
 
 MIDDLEWARE = [
