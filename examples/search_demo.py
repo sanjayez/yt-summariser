@@ -7,6 +7,7 @@ Demonstrates how to use the ScrapeTubeProvider and YouTubeSearchService
 import sys
 import os
 import logging
+import time
 
 # Add the project root to the path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -29,8 +30,13 @@ def demo_scrapetube_provider():
     """Demonstrate ScrapeTubeProvider usage"""
     print("=== ScrapeTubeProvider Demo ===")
     
-    # Create provider instance
-    provider = ScrapeTubeProvider(max_results=3)
+    # Create provider instance with filtering enabled
+    provider = ScrapeTubeProvider(
+        max_results=3,
+        filter_shorts=True,
+        english_only=True,
+        min_duration_seconds=60
+    )
     
     # Show provider info
     print("Provider Info:")
@@ -46,19 +52,19 @@ def demo_scrapetube_provider():
     
     # Perform a search
     search_query = "python programming tutorial"
-    print(f"\nSearching for: '{search_query}'")
+    print(f"\nSearching for: '{search_query}' (with English-only and shorts filtering)")
     
     try:
         # Simple search
         urls = provider.search(search_query, max_results=3)
-        print(f"Found {len(urls)} URLs:")
+        print(f"Found {len(urls)} filtered URLs:")
         for i, url in enumerate(urls, 1):
             print(f"  {i}. {url}")
         
         # Search with metadata
         print(f"\nSearching with metadata for: '{search_query}'")
         results = provider.search_with_metadata(search_query, max_results=3)
-        print(f"Found {len(results)} results with metadata:")
+        print(f"Found {len(results)} filtered results with metadata:")
         for i, result in enumerate(results, 1):
             print(f"  {i}. {result.title}")
             print(f"     URL: {result.url}")
@@ -71,6 +77,42 @@ def demo_scrapetube_provider():
     except Exception as e:
         print(f"Error during search: {str(e)}")
         logger.error(f"Search failed: {str(e)}")
+
+def demo_filtering_comparison():
+    """Demonstrate filtering vs non-filtering comparison"""
+    print("\n=== Filtering Comparison Demo ===")
+    
+    # Provider without filtering
+    provider_unfiltered = ScrapeTubeProvider(
+        max_results=5,
+        filter_shorts=False,
+        english_only=False
+    )
+    
+    # Provider with filtering
+    provider_filtered = ScrapeTubeProvider(
+        max_results=5,
+        filter_shorts=True,
+        english_only=True,
+        min_duration_seconds=60
+    )
+    
+    search_query = "tutorial"
+    
+    try:
+        print("Without filtering:")
+        unfiltered_results = provider_unfiltered.search_with_metadata(search_query, max_results=3)
+        for i, result in enumerate(unfiltered_results, 1):
+            print(f"  {i}. {result.title} ({result.duration})")
+        
+        print("\nWith filtering (English-only, no shorts):")
+        filtered_results = provider_filtered.search_with_metadata(search_query, max_results=3)
+        for i, result in enumerate(filtered_results, 1):
+            print(f"  {i}. {result.title} ({result.duration})")
+            
+    except Exception as e:
+        print(f"Error during filtering comparison: {str(e)}")
+        logger.error(f"Filtering comparison failed: {str(e)}")
 
 def demo_youtube_search_service():
     """Demonstrate YouTubeSearchService usage"""
@@ -137,8 +179,14 @@ def demo_custom_provider():
     """Demonstrate custom provider configuration"""
     print("\n=== Custom Provider Demo ===")
     
-    # Create custom provider with different settings
-    custom_provider = ScrapeTubeProvider(max_results=5, timeout=45)
+    # Create custom provider with strict filtering
+    custom_provider = ScrapeTubeProvider(
+        max_results=5, 
+        timeout=45,
+        filter_shorts=True,
+        english_only=True,
+        min_duration_seconds=300  # 5 minutes minimum for educational content
+    )
     
     # Create service with custom provider
     service = YouTubeSearchService(custom_provider)
@@ -150,29 +198,78 @@ def demo_custom_provider():
     
     # Test with custom provider
     try:
-        results = service.search_with_metadata("react tutorial", max_results=2)
-        print(f"\nFound {len(results)} results with custom provider:")
+        results = service.search_with_metadata("machine learning course", max_results=2)
+        print(f"\nFound {len(results)} long-form educational videos:")
         for i, result in enumerate(results, 1):
             print(f"  {i}. {result.title}")
+            print(f"     Duration: {result.duration}")
             print(f"     URL: {result.url}")
         
     except Exception as e:
         print(f"Error with custom provider: {str(e)}")
         logger.error(f"Custom provider search failed: {str(e)}")
 
+def demo_iterative_fetching():
+    """Demonstrate iterative fetching until target results found"""
+    print("\n=== Iterative Fetching Demo ===")
+    
+    # Create provider with strict filtering to demonstrate the iterative approach
+    provider = ScrapeTubeProvider(
+        max_results=5,
+        filter_shorts=True,
+        english_only=True,
+        min_duration_seconds=180  # 3 minutes - quite strict to show iteration
+    )
+    
+    search_query = "tutorial"  # Broad query that will have many results but many filtered out
+    
+    print(f"Searching for: '{search_query}'")
+    print(f"Target: 5 English videos longer than 3 minutes")
+    print("This will demonstrate iterative fetching until we find enough filtered results...")
+    
+    try:
+        # Enable debug logging to see the filtering process
+        import logging
+        logging.getLogger('topic.services.providers.scrapetube_provider').setLevel(logging.INFO)
+        
+        start_time = time.time()
+        results = provider.search_with_metadata(search_query, max_results=5)
+        elapsed = time.time() - start_time
+        
+        print(f"\n✅ Successfully found {len(results)} filtered results in {elapsed:.2f}s:")
+        for i, result in enumerate(results, 1):
+            print(f"  {i}. {result.title}")
+            print(f"     Duration: {result.duration}")
+            print(f"     Channel: {result.channel_name}")
+            print()
+        
+        if len(results) < 5:
+            print(f"⚠️  Note: Only found {len(results)}/5 results - may have hit the 100 video safety limit")
+            print("    This is normal for very strict filters or niche queries")
+        
+    except Exception as e:
+        print(f"Error during iterative fetching demo: {str(e)}")
+        logger.error(f"Iterative fetching demo failed: {str(e)}")
+
 def main():
     """Main demo function"""
-    print("YouTube Search Demo")
+    print("YouTube Search Demo with Filtering")
     print("=" * 50)
     
     try:
-        # Demo ScrapeTubeProvider
+        # Demo ScrapeTubeProvider with filtering
         demo_scrapetube_provider()
+        
+        # Demo filtering comparison
+        demo_filtering_comparison()
+        
+        # NEW: Demo iterative fetching
+        demo_iterative_fetching()
         
         # Demo YouTubeSearchService
         demo_youtube_search_service()
         
-        # Demo custom provider
+        # Demo custom provider with strict filtering
         demo_custom_provider()
         
     except KeyboardInterrupt:
@@ -182,6 +279,12 @@ def main():
         logger.error(f"Demo failed: {str(e)}")
     
     print("\nDemo completed!")
+    print("\nFiltering Features Demonstrated:")
+    print("✓ English-only video filtering")
+    print("✓ YouTube Shorts filtering by duration")
+    print("✓ Customizable duration thresholds")
+    print("✓ Comparison between filtered and unfiltered results")
+    print("✓ Iterative fetching until target results found")
 
 if __name__ == "__main__":
     main()

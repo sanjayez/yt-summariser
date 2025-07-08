@@ -14,6 +14,9 @@
 - Session management system (hybrid session ID + IP tracking)
 - LLM-powered query enhancement using existing ai_utils
 - YouTube search functionality using scrapetube
+- **NEW: English-only video filtering** to exclude non-English content
+- **NEW: YouTube Shorts filtering** based on video duration
+- Query enhancement using LLM for better search results
 - Structured JSON API response with search metadata
 
 ### **Success Criteria**
