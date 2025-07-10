@@ -33,9 +33,10 @@ class VideoMetadataAdmin(admin.ModelAdmin):
 
 @admin.register(VideoTranscript)
 class VideoTranscriptAdmin(admin.ModelAdmin):
-    list_display = ['video_metadata', 'video_language', 'status', 'transcript_preview', 'segments_count', 'created_at']
-    list_filter = ['status', 'video_metadata__language', 'created_at']
+    list_display = ['video_id', 'video_language', 'status', 'transcript_preview', 'segments_count', 'created_at']
+    list_filter = ['status', 'created_at']
     readonly_fields = ['created_at']
+    search_fields = ['video_id']
     
     def transcript_preview(self, obj):
         return obj.transcript_text[:20] + "..." if len(obj.transcript_text) > 20 else obj.transcript_text
@@ -52,8 +53,8 @@ class VideoTranscriptAdmin(admin.ModelAdmin):
 @admin.register(TranscriptSegment)
 class TranscriptSegmentAdmin(admin.ModelAdmin):
     list_display = ['segment_id', 'transcript', 'sequence_number', 'start_time', 'end_time', 'is_embedded', 'text_preview']
-    list_filter = ['is_embedded', 'transcript__video_metadata__video_id']
-    search_fields = ['segment_id', 'text', 'transcript__video_metadata__video_id']
+    list_filter = ['is_embedded', 'transcript__video_id']
+    search_fields = ['segment_id', 'text', 'transcript__video_id']
     readonly_fields = ['created_at']
     ordering = ['transcript', 'sequence_number']
     

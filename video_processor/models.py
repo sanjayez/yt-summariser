@@ -1,6 +1,46 @@
 from django.db import models
 from api.models import URLRequestTable
 
+
+class VideoMetadataManager(models.Manager):
+    """Custom manager for VideoMetadata with natural key support"""
+    
+    def get_by_video_id(self, video_id):
+        """Get VideoMetadata by natural key (video_id)"""
+        return self.get(video_id=video_id)
+    
+    def get_or_create_by_video_id(self, video_id, defaults=None):
+        """Get or create VideoMetadata by natural key (video_id)"""
+        return self.get_or_create(video_id=video_id, defaults=defaults or {})
+
+
+class VideoTranscriptManager(models.Manager):
+    """Custom manager for VideoTranscript with natural key support"""
+    
+    def get_by_video_id(self, video_id):
+        """Get VideoTranscript by natural key (video_id)"""
+        return self.get(video_id=video_id)
+    
+    def get_or_create_by_video_id(self, video_id, defaults=None):
+        """Get or create VideoTranscript by natural key (video_id)"""
+        return self.get_or_create(video_id=video_id, defaults=defaults or {})
+
+
+class TranscriptSegmentManager(models.Manager):
+    """Custom manager for TranscriptSegment with natural key support"""
+    
+    def get_by_segment_id(self, segment_id):
+        """Get TranscriptSegment by natural key (segment_id)"""
+        return self.get(segment_id=segment_id)
+    
+    def get_or_create_by_segment_id(self, segment_id, defaults=None):
+        """Get or create TranscriptSegment by natural key (segment_id)"""
+        return self.get_or_create(segment_id=segment_id, defaults=defaults or {})
+    
+    def get_by_video_id(self, video_id):
+        """Get all segments for a video by video_id"""
+        return self.filter(segment_id__startswith=f"{video_id}_")
+
 class VideoMetadata(models.Model):
     STATUS_CHOICES = [
         ('processing', 'Processing'),
@@ -8,8 +48,10 @@ class VideoMetadata(models.Model):
         ('success', 'Success'),
     ]
     
+    objects = VideoMetadataManager()  # Custom manager
+    
     url_request = models.OneToOneField(URLRequestTable, on_delete=models.CASCADE, related_name='video_metadata')
-    video_id = models.CharField(max_length=20, unique=True, db_index=True, null=True, blank=True, help_text="YouTube video ID (e.g., 'dQw4w9WgXcQ')")
+    video_id = models.CharField(max_length=20, primary_key=True, help_text="YouTube video ID (e.g., 'dQw4w9WgXcQ')")
     title = models.CharField(max_length=500, blank=True)
     description = models.TextField(blank=True)
     duration = models.IntegerField(null=True, blank=True)  # in seconds
@@ -49,6 +91,30 @@ class VideoMetadata(models.Model):
         if self.video_id:
             return f"https://www.youtube.com/watch?v={self.video_id}"
         return ""
+    
+    @property
+    def video_transcript(self):
+        """Get the related VideoTranscript using the shared video_id"""
+        try:
+            return VideoTranscript.objects.get(video_id=self.video_id)
+        except VideoTranscript.DoesNotExist:
+            return None
+    
+    def natural_key(self):
+        """Return natural key for this model"""
+        return (self.video_id,)
+    
+    def __str__(self):
+        return f"{self.video_id} - {self.title[:50]}"
+    
+    class Meta:
+        indexes = [
+            models.Index(fields=['status']),
+            models.Index(fields=['created_at']),
+            models.Index(fields=['channel_id']),  # For channel-based filtering
+            models.Index(fields=['language']),  # For language-based filtering
+            models.Index(fields=['is_embedded']),  # For vector embedding tracking
+        ]
 
 class VideoTranscript(models.Model):
     STATUS_CHOICES = [
@@ -57,10 +123,10 @@ class VideoTranscript(models.Model):
         ('success', 'Success'),
     ]
     
-    # New relationship (will replace url_request after migration)
-    video_metadata = models.OneToOneField(VideoMetadata, on_delete=models.CASCADE, related_name='video_transcript', null=True, blank=True)
-    # Old relationship (keep temporarily for migration)
-    url_request = models.OneToOneField(URLRequestTable, on_delete=models.CASCADE, related_name='video_transcript_old', null=True, blank=True)
+    objects = VideoTranscriptManager()  # Custom manager
+    
+    # Natural key field for efficient lookups and primary key
+    video_id = models.CharField(max_length=20, primary_key=True, help_text='YouTube video ID - natural key for lookups')
     transcript_text = models.TextField()  # Plain text for search/summary - only field needed for summaries
     
     # AI-generated summary fields
@@ -69,6 +135,14 @@ class VideoTranscript(models.Model):
     
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='processing')
     created_at = models.DateTimeField(auto_now_add=True)
+    
+    @property
+    def video_metadata(self):
+        """Get the related VideoMetadata using the shared video_id"""
+        try:
+            return VideoMetadata.objects.get(video_id=self.video_id)
+        except VideoMetadata.DoesNotExist:
+            return None
     
     def get_formatted_transcript(self):
         """Return transcript with clickable timestamps for UI using segments"""
@@ -92,6 +166,19 @@ class VideoTranscript(models.Model):
                 'text': segment.text
             })
         return formatted_segments
+    
+    def natural_key(self):
+        """Return natural key for this model"""
+        return (self.video_id,)
+    
+    def __str__(self):
+        return f"Transcript for {self.video_id}"
+    
+    class Meta:
+        indexes = [
+            models.Index(fields=['status']),
+            models.Index(fields=['created_at']),
+        ]
 
 
 class TranscriptSegment(models.Model):
@@ -100,8 +187,10 @@ class TranscriptSegment(models.Model):
     Each segment represents a small portion of the video with timestamps.
     """
     
-    transcript = models.ForeignKey(VideoTranscript, on_delete=models.CASCADE, related_name='segments')
-    segment_id = models.CharField(max_length=50, unique=True, db_index=True, 
+    objects = TranscriptSegmentManager()  # Custom manager
+    
+    transcript = models.ForeignKey(VideoTranscript, on_delete=models.CASCADE, related_name='segments', to_field='video_id')
+    segment_id = models.CharField(max_length=50, primary_key=True, 
                                  help_text="Unique segment ID format: 'video_id_segment_number' (e.g., 'dQw4w9WgXcQ_001')")
     sequence_number = models.IntegerField(help_text="Sequential order of this segment in the video")
     
@@ -154,16 +243,26 @@ class TranscriptSegment(models.Model):
         """Return YouTube URL with timestamp for direct video navigation"""
         video_id = self.transcript.video_metadata.video_id
         return f"https://www.youtube.com/watch?v={video_id}&t={int(self.start_time)}s"
+    
+    def natural_key(self):
+        """Return natural key for this model"""
+        return (self.segment_id,)
+    
+    def get_video_id(self):
+        """Extract video_id from segment_id"""
+        return self.segment_id.rsplit('_', 1)[0] if '_' in self.segment_id else None
 
 # Helper function to update URLRequestTable status based on related models
 def update_url_request_status(url_request):
     """Update URLRequestTable status based on VideoMetadata and VideoTranscript statuses"""
     try:
         metadata_status = getattr(url_request.video_metadata, 'status', None)
-        # Get transcript status through the new relationship
+        # Get transcript status through the video_transcript property
         transcript_status = None
-        if hasattr(url_request, 'video_metadata') and hasattr(url_request.video_metadata, 'video_transcript'):
-            transcript_status = getattr(url_request.video_metadata.video_transcript, 'status', None)
+        if hasattr(url_request, 'video_metadata') and url_request.video_metadata:
+            video_transcript = url_request.video_metadata.video_transcript
+            if video_transcript:
+                transcript_status = video_transcript.status
         
         # If both exist and both are successful
         if metadata_status == 'success' and transcript_status == 'success':

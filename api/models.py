@@ -11,6 +11,14 @@ class URLRequestTable(models.Model):
     ]
     
     request_id = models.UUIDField(default=uuid.uuid4, editable=False, unique=True)
+    search_request = models.ForeignKey(
+        'topic.SearchRequest', 
+        on_delete=models.CASCADE,
+        related_name='url_requests',
+        null=True,
+        blank=True,
+        help_text="Link to the search request that generated this URL"
+    )
     url = models.URLField(max_length=500)
     ip_address = models.GenericIPAddressField()
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='processing')
