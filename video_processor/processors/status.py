@@ -14,6 +14,7 @@ logger = logging.getLogger(__name__)
 
 # Task 3: Update Overall Status
 @shared_task(bind=True,
+             name='video_processor.update_overall_status',
              autoretry_for=(Exception,),
              retry_backoff=YOUTUBE_CONFIG['RETRY_CONFIG']['status_update']['backoff'],
              retry_jitter=YOUTUBE_CONFIG['RETRY_CONFIG']['status_update']['jitter'],

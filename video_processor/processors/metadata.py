@@ -36,7 +36,8 @@ def extract_thumbnail_url(info):
     return best_thumbnail.get('url', '')
 
 # Task 1: Extract Video Metadata
-@shared_task(bind=True, 
+@shared_task(bind=True,
+             name='video_processor.extract_video_metadata',
              autoretry_for=(Exception,), 
              retry_backoff=YOUTUBE_CONFIG['RETRY_CONFIG']['metadata']['backoff'],
              retry_jitter=YOUTUBE_CONFIG['RETRY_CONFIG']['metadata']['jitter'],

@@ -31,6 +31,17 @@ local_settings.py
 db.sqlite3
 db.sqlite3-journal
 
+# Celery & Flower
+flower*.db
+flower*.db.db
+*.db.db
+celerybeat-schedule
+celerybeat.pid
+/tmp/celery_worker*.log
+/tmp/celery_worker*.pid
+/tmp/flower.log
+/tmp/flower.pid
+
 # IDE
 .idea/
 .vscode/

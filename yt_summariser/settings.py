@@ -51,6 +51,7 @@ INSTALLED_APPS = [
     'django.contrib.staticfiles',
     'corsheaders',
     'rest_framework',
+    'django_celery_results',
     'api',
     'video_processor',
     'topic',
@@ -149,10 +150,15 @@ DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
 # Celery Configuration
 CELERY_BROKER_URL = 'redis://localhost:6379/0'
-CELERY_RESULT_BACKEND = 'redis://localhost:6379/0'
+CELERY_RESULT_BACKEND = 'django-db'
+CELERY_CACHE_BACKEND = 'django-cache'
 CELERY_ACCEPT_CONTENT = ['json']
 CELERY_TASK_SERIALIZER = 'json'
 CELERY_RESULT_SERIALIZER = 'json'
+
+# Store task results for 7 days with extended information
+CELERY_RESULT_EXPIRES = 60 * 60 * 24 * 7  # 7 days
+CELERY_RESULT_EXTENDED = True  # Store task name, args, kwargs, worker info
 
 # Enhanced Celery configuration for macOS stability and long-running tasks
 CELERY_WORKER_PREFETCH_MULTIPLIER = 1  # Process one task at a time

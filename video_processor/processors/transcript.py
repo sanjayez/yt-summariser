@@ -88,6 +88,7 @@ def extract_transcript_with_fallback(video_id, primary_language='en'):
 
 # Task 2: Extract Video Transcript
 @shared_task(bind=True,
+             name='video_processor.extract_video_transcript',
              autoretry_for=(Exception,),
              retry_backoff=YOUTUBE_CONFIG['RETRY_CONFIG']['transcript']['backoff'],
              retry_jitter=YOUTUBE_CONFIG['RETRY_CONFIG']['transcript']['jitter'],

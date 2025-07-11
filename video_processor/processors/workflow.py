@@ -13,7 +13,7 @@ from .status import update_overall_status
 logger = logging.getLogger(__name__)
 
 # Main entry point - creates task chain
-@shared_task(bind=True)
+@shared_task(bind=True, name='video_processor.process_youtube_video')
 def process_youtube_video(self, url_request_id):
     """
     Entry point that creates and executes the enhanced video processing chain.

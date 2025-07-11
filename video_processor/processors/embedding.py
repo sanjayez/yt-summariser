@@ -238,6 +238,7 @@ def embed_video_content_sync(video_metadata: VideoMetadata, transcript: VideoTra
         raise
 
 @shared_task(bind=True,
+             name='video_processor.embed_video_content',
              autoretry_for=(Exception,),
              retry_backoff=YOUTUBE_CONFIG['RETRY_CONFIG']['transcript']['backoff'],
              retry_jitter=YOUTUBE_CONFIG['RETRY_CONFIG']['transcript']['jitter'],

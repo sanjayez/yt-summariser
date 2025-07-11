@@ -270,6 +270,7 @@ Create a unified, well-structured summary with key points. Focus on the main the
         raise
 
 @shared_task(bind=True,
+             name='video_processor.generate_video_summary',
              autoretry_for=(Exception,),
              retry_backoff=YOUTUBE_CONFIG['RETRY_CONFIG']['transcript']['backoff'],
              retry_jitter=YOUTUBE_CONFIG['RETRY_CONFIG']['transcript']['jitter'],
