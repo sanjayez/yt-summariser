@@ -159,10 +159,23 @@ def extract_video_metadata(self, url_request_id):
         with transaction.atomic():
             try:
                 url_request = URLRequestTable.objects.get(id=url_request_id)
-                VideoMetadata.objects.update_or_create(
-                    url_request=url_request,
-                    defaults={'status': 'failed'}
-                )
+                
+                # Check if a VideoMetadata already exists for this URL request
+                existing_metadata = VideoMetadata.objects.filter(url_request=url_request).first()
+                
+                if existing_metadata:
+                    # Update existing metadata status
+                    existing_metadata.status = 'failed'
+                    existing_metadata.save()
+                else:
+                    # Only create a new metadata record if we can provide a proper video_id
+                    # For failed extractions, we'll update the URLRequest status instead
+                    url_request.status = 'failed'
+                    url_request.save()
+                    
+                    # Don't create a VideoMetadata record with empty video_id
+                    logger.warning(f"Not creating VideoMetadata record for failed extraction (request {url_request_id})")
+                    
             except Exception as db_error:
                 logger.error(f"Failed to update metadata status: {db_error}")
         

@@ -21,7 +21,7 @@ logger = logging.getLogger(__name__)
 
 
 @shared_task(bind=True, name='topic.process_search_query')
-def process_search_query(self, search_request_id: str):
+def process_search_query(self, search_request_id: str, max_videos: int = 5):
     """
     Process a search query asynchronously
     
@@ -72,11 +72,12 @@ def process_search_query(self, search_request_id: str):
             
             # Configure YouTube search service with English-only and shorts filtering
             youtube_search_provider = ScrapeTubeProvider(
-                max_results=5,
+                max_results=max_videos,
                 timeout=30,
                 filter_shorts=True,      # Filter out YouTube shorts
                 english_only=True,       # Only English videos
-                min_duration_seconds=60  # Videos must be at least 60 seconds
+                min_duration_seconds=60, # Videos must be at least 60 seconds
+                max_duration_seconds=900 # Cap videos at 15 minutes for MVP testing
             )
             youtube_search_service = YouTubeSearchService(youtube_search_provider)
             
@@ -131,7 +132,7 @@ def process_search_query(self, search_request_id: str):
             
             search_request_obj = SearchRequest(
                 query=processed_query,
-                max_results=5,
+                max_results=max_videos,
                 include_metadata=False
             )
             
@@ -228,4 +229,61 @@ def _update_session_error(session: SearchSession):
     try:
         update_session_status(session, 'failed')
     except Exception as e:
-        logger.error(f"Failed to update session status: {e}") 
+        logger.error(f"Failed to update session status: {e}")
+
+
+@shared_task(bind=True, name='topic.process_search_with_videos')
+def process_search_with_videos(self, search_request_id: str, max_videos: int = 5, start_video_processing: bool = False):
+    """
+    Integrated search and video processing task.
+    
+    This task performs the search and optionally starts video processing
+    for the found videos.
+    
+    Args:
+        search_request_id: UUID of the SearchRequest to process
+        start_video_processing: Whether to start video processing after search
+        
+    Returns:
+        dict: Processing result with status and details
+    """
+    logger.info(f"Starting integrated search and video processing for request: {search_request_id}")
+    
+    try:
+        # First, perform the search - call directly, not async
+        search_result = process_search_query(search_request_id, max_videos)
+        
+        if search_result['status'] != 'success':
+            logger.error(f"Search failed for request {search_request_id}: {search_result}")
+            return search_result
+        
+        # If video processing is requested and we have videos
+        if start_video_processing and search_result.get('video_urls'):
+            logger.info(f"Starting video processing for {len(search_result['video_urls'])} videos")
+            
+            # Import here to avoid circular imports
+            from topic.parallel_tasks import process_search_results
+            
+            # Start parallel video processing
+            video_processing_result = process_search_results.apply_async(args=[search_request_id])
+            
+            # Return combined result
+            return {
+                'status': 'processing_videos',
+                'search_request_id': search_request_id,
+                'search_result': search_result,
+                'video_processing_task_id': video_processing_result.id,
+                'message': f"Search completed, processing {len(search_result['video_urls'])} videos"
+            }
+        else:
+            # Return search result only
+            return search_result
+            
+    except Exception as e:
+        logger.error(f"Unexpected error in process_search_with_videos: {e}")
+        return {
+            'status': 'failed',
+            'error': 'Unexpected error',
+            'details': str(e),
+            'search_request_id': search_request_id
+        } 

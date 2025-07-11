@@ -92,14 +92,6 @@ class VideoMetadata(models.Model):
             return f"https://www.youtube.com/watch?v={self.video_id}"
         return ""
     
-    @property
-    def video_transcript(self):
-        """Get the related VideoTranscript using the shared video_id"""
-        try:
-            return VideoTranscript.objects.get(video_id=self.video_id)
-        except VideoTranscript.DoesNotExist:
-            return None
-    
     def natural_key(self):
         """Return natural key for this model"""
         return (self.video_id,)
@@ -127,6 +119,16 @@ class VideoTranscript(models.Model):
     
     # Natural key field for efficient lookups and primary key
     video_id = models.CharField(max_length=20, primary_key=True, help_text='YouTube video ID - natural key for lookups')
+    
+    # Proper foreign key relationship to VideoMetadata for cascading deletes
+    video_metadata = models.OneToOneField(
+        VideoMetadata, 
+        on_delete=models.CASCADE,
+        to_field='video_id',  # Reference the natural key
+        related_name='video_transcript',
+        help_text='Foreign key to VideoMetadata for proper cascading deletes'
+    )
+    
     transcript_text = models.TextField()  # Plain text for search/summary - only field needed for summaries
     
     # AI-generated summary fields
@@ -135,14 +137,6 @@ class VideoTranscript(models.Model):
     
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='processing')
     created_at = models.DateTimeField(auto_now_add=True)
-    
-    @property
-    def video_metadata(self):
-        """Get the related VideoMetadata using the shared video_id"""
-        try:
-            return VideoMetadata.objects.get(video_id=self.video_id)
-        except VideoMetadata.DoesNotExist:
-            return None
     
     def get_formatted_transcript(self):
         """Return transcript with clickable timestamps for UI using segments"""

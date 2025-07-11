@@ -107,7 +107,7 @@ def extract_video_transcript(self, metadata_result, url_request_id):
         update_task_progress(self, TASK_STATES['EXTRACTING_TRANSCRIPT'], 10)
         
         # Get VideoMetadata object
-        video_metadata = VideoMetadata.objects.select_related('video_transcript').get(
+        video_metadata = VideoMetadata.objects.get(
             url_request__id=url_request_id
         )
         
@@ -116,7 +116,7 @@ def extract_video_transcript(self, metadata_result, url_request_id):
         # Create transcript object with transaction
         with transaction.atomic():
             transcript_obj, created = VideoTranscript.objects.get_or_create(
-                video_metadata=video_metadata,
+                video_id=video_id,
                 defaults={
                     'transcript_text': '',
                     'status': 'processing'
@@ -194,7 +194,7 @@ def extract_video_transcript(self, metadata_result, url_request_id):
             try:
                 video_metadata = VideoMetadata.objects.get(url_request__id=url_request_id)
                 VideoTranscript.objects.update_or_create(
-                    video_metadata=video_metadata,
+                    video_id=video_metadata.video_id,
                     defaults={
                         'transcript_text': '',
                         'status': 'failed'

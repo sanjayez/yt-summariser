@@ -164,9 +164,17 @@ CELERY_TASK_REJECT_ON_WORKER_LOST = True  # Reject tasks when worker dies
 CELERY_TASK_ACKS_LATE = True  # Only acknowledge tasks after completion
 CELERY_WORKER_DISABLE_RATE_LIMITS = True  # Disable rate limiting for long tasks
 
-# macOS specific worker settings
-CELERY_WORKER_POOL = 'solo'  # Use solo pool for macOS (more stable than fork)
-CELERY_WORKER_CONCURRENCY = 1  # Single worker for stability
+# macOS specific worker settings - PARALLEL PROCESSING CONFIGURATION
+# Choose one approach for parallel processing:
+
+# Option A: Multiple solo workers (recommended for stability)
+# CELERY_WORKER_POOL = 'solo'  # Use solo pool for macOS stability
+# CELERY_WORKER_CONCURRENCY = 1  # Single task per worker
+# Use start_celery_parallel.sh to run multiple worker processes
+
+# Option B: Single worker with thread concurrency  
+CELERY_WORKER_POOL = 'threads'  # Use thread pool for concurrency
+CELERY_WORKER_CONCURRENCY = 4  # Allow 4 concurrent tasks
 CELERY_BROKER_CONNECTION_RETRY_ON_STARTUP = True
 CELERY_BROKER_CONNECTION_RETRY = True
 

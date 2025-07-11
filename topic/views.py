@@ -3,17 +3,25 @@ from rest_framework.response import Response
 from rest_framework import status
 from rest_framework.exceptions import ValidationError, APIException
 from django.db import transaction
+from django.db.models import Q, Count, Case, When
 import logging
 
 from topic.utils.session_utils import get_or_create_session
 from topic.models import SearchRequest as SearchRequestModel
 from topic.serializers import TopicSearchRequestSerializer, TopicSearchResponseSerializer
-from topic.tasks import process_search_query
+from topic.tasks import process_search_query, process_search_with_videos
+from topic.parallel_tasks import process_search_results, get_search_processing_status
 from api.models import URLRequestTable
 from api.serializers import URLRequestTableSerializer
 from api.utils.get_client_ip import get_client_ip
 from video_processor.validators import validate_youtube_url
 from video_processor.processors.workflow import process_youtube_video
+from ai_utils.search_process_serializers import (
+    SearchToProcessRequestSerializer,
+    SearchToProcessResponseSerializer,
+    StatusCheckRequestSerializer,
+    StatusCheckResponseSerializer
+)
 
 logger = logging.getLogger(__name__)
 
@@ -265,6 +273,264 @@ class SearchAndProcessAPIView(APIView):
                 
         except Exception as e:
             logger.error(f"Error in SearchAndProcessAPIView: {e}")
+            return Response(
+                {'error': f'Internal server error: {str(e)}'}, 
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+
+class ParallelSearchProcessAPIView(APIView):
+    """
+    Enhanced parallel search and video processing endpoint.
+    
+    This endpoint provides true parallel processing of multiple videos
+    using Celery groups for maximum efficiency.
+    """
+    
+    def post(self, request):
+        """Process search query and start parallel video processing"""
+        try:
+            # Validate request using Pydantic serializer
+            serializer = SearchToProcessRequestSerializer(data=request.data)
+            if not serializer.is_valid():
+                return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+            
+            validated_data = serializer.validated_data
+            query = validated_data['query']
+            max_videos = validated_data.get('max_videos', 5)
+            process_videos = validated_data.get('process_videos', True)
+            
+            logger.info(f"Starting parallel search and process for query: '{query}'")
+            
+            # Create session  
+            session = get_or_create_session(request)
+            
+            # Create search request
+            with transaction.atomic():
+                search_request = SearchRequestModel.objects.create(
+                    search_session=session,
+                    original_query=query,
+                    status='processing'
+                )
+                
+                logger.info(f"Created search request {search_request.request_id}")
+                
+                # Start processing based on mode
+                if process_videos:
+                    # Use integrated workflow
+                    task = process_search_with_videos.delay(
+                        str(search_request.request_id),
+                        max_videos
+                    )
+                    logger.info(f"Started integrated search and video processing task {task.id}")
+                else:
+                    # Search only
+                    task = process_search_query.delay(str(search_request.request_id))
+                    logger.info(f"Started search-only task {task.id}")
+                
+                # Prepare response
+                response_data = {
+                    'search_request_id': str(search_request.request_id),
+                    'session_id': str(session.session_id),
+                    'query': query,
+                    'max_videos': max_videos,
+                    'process_videos': process_videos,
+                    'status': 'processing',
+                    'task_id': task.id
+                }
+                
+                # Serialize response
+                response_serializer = SearchToProcessResponseSerializer(data=response_data)
+                if response_serializer.is_valid():
+                    return Response(response_serializer.validated_data, status=status.HTTP_202_ACCEPTED)
+                else:
+                    return Response(response_serializer.errors, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+                
+        except Exception as e:
+            logger.error(f"Error in ParallelSearchProcessAPIView: {e}")
+            return Response(
+                {'error': f'Internal server error: {str(e)}'}, 
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+
+class SearchStatusAPIView(APIView):
+    """
+    Check the status of a search request and its video processing.
+    """
+    
+    def get(self, request, search_request_id):
+        """Get detailed status of search request and video processing"""
+        try:
+            logger.info(f"Checking status for search request {search_request_id}")
+            
+            # Get search request
+            try:
+                search_request = SearchRequestModel.objects.select_related('search_session').get(
+                    request_id=search_request_id
+                )
+            except SearchRequestModel.DoesNotExist:
+                return Response(
+                    {'error': 'Search request not found'}, 
+                    status=status.HTTP_404_NOT_FOUND
+                )
+            
+            # Get URL requests linked to this search
+            url_requests = URLRequestTable.objects.filter(
+                search_request=search_request
+            ).select_related('video_metadata')
+            
+            # Calculate progress statistics
+            total_videos = url_requests.count()
+            completed_videos = url_requests.filter(status__in=['success', 'failed']).count()
+            successful_videos = url_requests.filter(status='success').count()
+            failed_videos = url_requests.filter(status='failed').count()
+            processing_videos = url_requests.filter(status='processing').count()
+            
+            # Calculate progress percentage
+            progress_percentage = (completed_videos / total_videos * 100) if total_videos > 0 else 0
+            
+            # Get video details
+            video_details = []
+            for url_request in url_requests:
+                video_detail = {
+                    'request_id': str(url_request.request_id),
+                    'url': url_request.url,
+                    'status': url_request.status,
+                    'video_id': None,
+                    'title': None,
+                    'processing_stages': {
+                        'metadata': 'pending',
+                        'transcript': 'pending',
+                        'summary': 'pending',
+                        'embedding': 'pending'
+                    }
+                }
+                
+                # Add video metadata if available
+                if hasattr(url_request, 'video_metadata') and url_request.video_metadata:
+                    video_metadata = url_request.video_metadata
+                    video_detail['video_id'] = video_metadata.video_id
+                    video_detail['title'] = video_metadata.title
+                    
+                    # Update processing stages based on video metadata and transcript
+                    video_detail['processing_stages']['metadata'] = video_metadata.status
+                    
+                    # Check transcript status
+                    try:
+                        transcript = video_metadata.video_transcript
+                        if transcript:
+                            video_detail['processing_stages']['transcript'] = transcript.status
+                            if transcript.summary:
+                                video_detail['processing_stages']['summary'] = 'success'
+                            if video_metadata.is_embedded:
+                                video_detail['processing_stages']['embedding'] = 'success'
+                    except:
+                        pass
+                
+                video_details.append(video_detail)
+            
+            # Prepare response
+            response_data = {
+                'search_request_id': str(search_request.request_id),
+                'session_id': str(search_request.search_session.session_id),
+                'query': search_request.original_query,
+                'processed_query': search_request.processed_query or '',
+                'status': search_request.status,
+                'error_message': search_request.error_message or '',
+                'total_videos': total_videos,
+                'completed_videos': completed_videos,
+                'successful_videos': successful_videos,
+                'failed_videos': failed_videos,
+                'processing_videos': processing_videos,
+                'progress_percentage': round(progress_percentage, 2),
+                'video_details': video_details,
+                'created_at': search_request.created_at.isoformat()
+            }
+            
+            # Return response directly for now (skip serializer for simplicity)
+            return Response(response_data, status=status.HTTP_200_OK)
+                
+        except Exception as e:
+            logger.error(f"Error in SearchStatusAPIView: {e}")
+            return Response(
+                {'error': f'Internal server error: {str(e)}'}, 
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+
+class IntegratedSearchProcessAPIView(APIView):
+    """
+    Integrated search and video processing endpoint with enhanced features.
+    
+    This endpoint combines search and parallel video processing into a single
+    optimized workflow using the most efficient processing pipeline.
+    """
+    
+    def post(self, request):
+        """Start integrated search and video processing workflow"""
+        try:
+            # Simple validation for basic usage
+            query = request.data.get('query', '').strip()
+            max_videos = request.data.get('max_videos', 5)
+            timeout = request.data.get('timeout', 3600)  # 1 hour default
+            
+            if not query:
+                return Response(
+                    {'error': 'Query parameter is required'}, 
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            # Validate max_videos
+            try:
+                max_videos = int(max_videos)
+                if max_videos < 1 or max_videos > 10:
+                    max_videos = 5
+            except (ValueError, TypeError):
+                max_videos = 5
+            
+            logger.info(f"Starting integrated workflow for query: '{query}'")
+            
+            # Create session  
+            session = get_or_create_session(request)
+            
+            # Create search request
+            with transaction.atomic():
+                search_request = SearchRequestModel.objects.create(
+                    search_session=session,
+                    original_query=query,
+                    status='processing'
+                )
+                
+                logger.info(f"Created search request {search_request.request_id}")
+                
+            # Start integrated processing workflow after transaction commits
+            task = process_search_with_videos.delay(
+                str(search_request.request_id),
+                max_videos=max_videos,
+                start_video_processing=True
+            )
+            
+            logger.info(f"Started integrated processing task {task.id}")
+            
+            # Prepare response
+            response_data = {
+                'search_request_id': str(search_request.request_id),
+                'session_id': str(session.session_id),
+                'query': query,
+                'max_videos': max_videos,
+                'process_videos': True,
+                'status': 'processing',
+                'task_id': task.id,
+                'estimated_completion_time': timeout,
+                'status_check_url': f'/api/topic/search/status/{search_request.request_id}/'
+            }
+            
+            # Return response directly for now (skip serializer for simplicity)
+            return Response(response_data, status=status.HTTP_202_ACCEPTED)
+                
+        except Exception as e:
+            logger.error(f"Error in IntegratedSearchProcessAPIView: {e}")
             return Response(
                 {'error': f'Internal server error: {str(e)}'}, 
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR

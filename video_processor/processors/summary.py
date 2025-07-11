@@ -285,7 +285,7 @@ def generate_video_summary(self, transcript_result, url_request_id):
         
         # Get video metadata and transcript
         url_request = URLRequestTable.objects.select_related(
-            'video_metadata__video_transcript'
+            'video_metadata'
         ).get(id=url_request_id)
         
         if not hasattr(url_request, 'video_metadata'):
@@ -340,7 +340,7 @@ def generate_video_summary(self, transcript_result, url_request_id):
         try:
             with transaction.atomic():
                 url_request = URLRequestTable.objects.select_related(
-                    'video_metadata__video_transcript'
+                    'video_metadata'
                 ).get(id=url_request_id)
                 
                 if (hasattr(url_request, 'video_metadata') and 

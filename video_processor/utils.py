@@ -1,4 +1,3 @@
-import signal
 import hashlib
 import logging
 from datetime import datetime
@@ -10,20 +9,35 @@ from django.utils import timezone
 
 logger = logging.getLogger(__name__)
 
-# Timeout Context Manager
+# Timeout Context Manager - Thread-safe implementation
 @contextmanager
 def timeout(seconds, operation_name="Operation"):
-    """Context manager for adding timeout to operations"""
-    def timeout_handler(signum, frame):
-        raise TimeoutError(f"{operation_name} timed out after {seconds} seconds")
+    """Context manager for adding timeout to operations - thread-safe for Celery"""
+    import threading
+    import time
     
-    old_handler = signal.signal(signal.SIGALRM, timeout_handler)
-    signal.alarm(seconds)
+    # For Celery workers, we'll use a simple timer approach
+    # This is less precise but works across threads
+    start_time = time.time()
+    
+    class TimeoutChecker:
+        def __init__(self, timeout_seconds, op_name):
+            self.timeout_seconds = timeout_seconds
+            self.op_name = op_name
+            self.start_time = time.time()
+        
+        def check(self):
+            if time.time() - self.start_time > self.timeout_seconds:
+                raise TimeoutError(f"{self.op_name} timed out after {self.timeout_seconds} seconds")
+    
+    checker = TimeoutChecker(seconds, operation_name)
     try:
-        yield
-    finally:
-        signal.alarm(0)
-        signal.signal(signal.SIGALRM, old_handler)
+        yield checker
+    except Exception as e:
+        # Log timeout issues but don't fail the entire task
+        if "timed out" in str(e):
+            logger.warning(f"Timeout occurred in {operation_name}: {e}")
+        raise
 
 # Idempotency Key Generation
 def generate_idempotency_key(task_name, *args, **kwargs):

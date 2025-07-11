@@ -29,7 +29,7 @@ def process_youtube_video(self, url_request_id):
     """
     try:
         # Validate input
-        url_request = URLRequestTable.objects.select_related('video_metadata__video_transcript').get(id=url_request_id)
+        url_request = URLRequestTable.objects.select_related('video_metadata').get(id=url_request_id)
         
         # Validate URL
         validate_youtube_url(url_request.url)
@@ -54,4 +54,59 @@ def process_youtube_video(self, url_request_id):
     except Exception as e:
         logger.error(f"Failed to initiate processing pipeline for {url_request_id}: {e}")
         handle_dead_letter_task('process_youtube_video', self.request.id, [url_request_id], {}, e)
-        raise 
+        raise
+
+
+@shared_task(bind=True, name='video_processor.process_parallel_videos')
+def process_parallel_videos(self, url_request_ids):
+    """
+    Process multiple videos in parallel using Celery groups.
+    
+    This task is designed for parallel processing of search results,
+    where multiple videos need to be processed simultaneously.
+    
+    Args:
+        url_request_ids: List of URLRequestTable IDs to process
+        
+    Returns:
+        dict: Processing result with parallel job information
+    """
+    logger.info(f"Starting parallel processing for {len(url_request_ids)} videos")
+    
+    try:
+        # Validate all URL requests exist
+        existing_requests = URLRequestTable.objects.filter(id__in=url_request_ids)
+        if existing_requests.count() != len(url_request_ids):
+            missing_ids = set(url_request_ids) - set(existing_requests.values_list('id', flat=True))
+            error_msg = f"Missing URLRequestTable entries: {missing_ids}"
+            logger.error(error_msg)
+            return {
+                'status': 'failed',
+                'error': 'Missing URL request entries',
+                'missing_ids': list(missing_ids)
+            }
+        
+        # Create group of video processing tasks
+        video_processing_group = group(
+            process_youtube_video.s(url_request_id) for url_request_id in url_request_ids
+        )
+        
+        # Execute parallel processing
+        result = video_processing_group.apply_async()
+        
+        logger.info(f"Launched parallel processing for {len(url_request_ids)} videos, group ID: {result.id}")
+        
+        return {
+            'status': 'processing',
+            'group_id': result.id,
+            'total_videos': len(url_request_ids),
+            'url_request_ids': url_request_ids
+        }
+        
+    except Exception as e:
+        logger.error(f"Failed to start parallel processing: {e}")
+        return {
+            'status': 'failed',
+            'error': 'Failed to start parallel processing',
+            'details': str(e)
+        } 

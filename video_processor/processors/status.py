@@ -27,7 +27,7 @@ def update_overall_status(self, transcript_result, url_request_id):
         update_task_progress(self, TASK_STATES['UPDATING_STATUS'], 50)
         
         # Optimized query with select_related
-        url_request = URLRequestTable.objects.select_related('video_metadata__video_transcript').get(id=url_request_id)
+        url_request = URLRequestTable.objects.select_related('video_metadata').get(id=url_request_id)
         
         logger.info(f"Updating overall status for request {url_request_id}")
         

@@ -31,7 +31,8 @@ class ScrapeTubeProvider:
                  timeout: int = 30,
                  filter_shorts: bool = True,
                  english_only: bool = True,
-                 min_duration_seconds: int = 60):
+                 min_duration_seconds: int = 60,
+                 max_duration_seconds: Optional[int] = None):
         """
         Initialize the ScrapeTube provider
         
@@ -41,12 +42,14 @@ class ScrapeTubeProvider:
             filter_shorts: Whether to filter out YouTube shorts (default: True)
             english_only: Whether to filter for English content only (default: True)
             min_duration_seconds: Minimum video duration in seconds to exclude shorts (default: 60)
+            max_duration_seconds: Maximum video duration in seconds to cap long videos (default: None for no limit)
         """
         self.max_results = max_results
         self.timeout = timeout
         self.filter_shorts = filter_shorts
         self.english_only = english_only
         self.min_duration_seconds = min_duration_seconds
+        self.max_duration_seconds = max_duration_seconds
         self.base_url = "https://www.youtube.com/watch?v="
         
         # Common non-English indicators (basic detection)
@@ -138,6 +141,13 @@ class ScrapeTubeProvider:
             duration_seconds = self._parse_duration_to_seconds(duration)
             if duration_seconds and duration_seconds < self.min_duration_seconds:
                 logger.debug(f"Filtering out short video: {duration} ({duration_seconds}s)")
+                return False
+        
+        # Filter out long videos by max duration
+        if self.max_duration_seconds and duration:
+            duration_seconds = self._parse_duration_to_seconds(duration)
+            if duration_seconds and duration_seconds > self.max_duration_seconds:
+                logger.debug(f"Filtering out long video: {duration} ({duration_seconds}s > {self.max_duration_seconds}s)")
                 return False
         
         # Filter for English content
@@ -463,5 +473,6 @@ class ScrapeTubeProvider:
             "filter_shorts": self.filter_shorts,
             "english_only": self.english_only,
             "min_duration_seconds": self.min_duration_seconds,
+            "max_duration_seconds": self.max_duration_seconds,
             "supported_search_types": self.get_supported_search_types()
         }
