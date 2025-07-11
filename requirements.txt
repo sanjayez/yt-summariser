@@ -15,3 +15,4 @@ pydantic>=2.0.0,<3.0.0
 pytest>=7.0.0,<8.0.0
 pytest-asyncio>=0.21.0,<1.0.0
 scrapetube==2.5.1
+flower>=2.0.1

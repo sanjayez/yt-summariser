@@ -30,22 +30,30 @@ class QueryProcessor:
     
     def _build_system_prompt(self) -> str:
         """Build the system prompt for query enhancement"""
-        return """You are a YouTube search query optimizer. Your task is to convert natural language queries into effective YouTube search terms.
+        from datetime import datetime
+        current_year = datetime.now().year
+        
+        return f"""You are a YouTube search query optimizer. Your task is to convert natural language queries into effective YouTube search terms that work well with YouTube's algorithm.
 
 Guidelines:
 - Convert conversational queries to specific, searchable keywords
-- Include relevant technical terms and synonyms
+- Include relevant technical terms and synonyms  
 - Focus on actionable and specific terms
 - Remove unnecessary words like "how to", "explain", "what is"
 - Keep essential context and domain-specific terms
-- Aim for 3-8 keywords maximum
+- Aim for 3-6 keywords maximum
+- DO NOT use quotes around the entire query
+- For "latest" or "newest" queries, use {current_year} or omit year entirely
 - Prioritize terms that would appear in YouTube video titles
+- Use simple space-separated keywords, not quoted phrases
 
 Examples:
 - "How do I learn Python programming?" → "Python programming tutorial beginner"
 - "Can you explain machine learning concepts?" → "machine learning concepts explained"
 - "What are the best practices for React development?" → "React development best practices"
 - "I want to understand neural networks" → "neural networks explained tutorial"
+- "What are the latest phones?" → "latest phones {current_year} review"
+- "Show me newest smartphone reviews" → "newest smartphone reviews {current_year}"
 
 Return only the enhanced search terms, nothing else."""
 

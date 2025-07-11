@@ -45,6 +45,7 @@ class NaturalKeyTestCase(TestCase):
         # Create video transcript
         self.video_transcript = VideoTranscript.objects.create(
             video_id='dQw4w9WgXcQ',
+            video_metadata=self.video_metadata,  # Required foreign key field
             transcript_text='Test transcript',
             status='success'
         )

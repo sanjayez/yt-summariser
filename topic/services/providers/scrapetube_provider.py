@@ -69,6 +69,29 @@ class ScrapeTubeProvider:
             # Thai
             r'[\u0e00-\u0e7f]',
         ]
+        
+        # Language keywords that indicate non-English content
+        self.non_english_keywords = [
+            # Specific language indicators
+            'hindi', 'spanish', 'french', 'german', 'italian', 'portuguese', 'russian',
+            'chinese', 'japanese', 'korean', 'arabic', 'turkish', 'dutch', 'polish',
+            'tamil', 'telugu', 'bengali', 'marathi', 'gujarati', 'punjabi', 'urdu',
+            'malayalam', 'kannada', 'oriya', 'assamese', 'mandarin', 'cantonese',
+            
+            # Non-English tutorial/course indicators  
+            'tutoriel', 'curso', 'kurs', 'درس', '教程', 'チュートリアル',
+            'ट्यूटोरियल', 'টিউটোরিয়াল', 'ट्यूटोरिअल',
+            
+            # "In language" patterns (most reliable indicators)
+            'in hindi', 'en español', 'en français', 'auf deutsch', 'in chinese',
+            'in tamil', 'in telugu', 'in bengali', 'in marathi', 'في العربية',
+            'in korean', 'in japanese', 'in russian', 'in arabic', 'in portuguese',
+            'in italian', 'in dutch', 'in polish', 'in turkish',
+            
+            # Common non-English phrases
+            'como fazer', 'wie man', 'comment faire', 'cómo hacer', 'كيفية',
+            'पर कैसे', 'എങ്ങനെ', 'எப்படி', 'कैसे करें', 'कसे',
+        ]
     
     def _parse_duration_to_seconds(self, duration_str: str) -> Optional[int]:
         """
@@ -109,9 +132,18 @@ class ScrapeTubeProvider:
         if not text:
             return True  # Default to True for empty text
         
+        # Convert to lowercase for keyword matching
+        text_lower = text.lower()
+        
         # Check for non-English character patterns
         for pattern in self.non_english_patterns:
             if re.search(pattern, text):
+                return False
+        
+        # Check for non-English language keywords
+        for keyword in self.non_english_keywords:
+            if keyword in text_lower:
+                logger.debug(f"Found non-English keyword '{keyword}' in title: {text}")
                 return False
         
         # Check if majority of characters are ASCII (basic English check)
@@ -474,5 +506,6 @@ class ScrapeTubeProvider:
             "english_only": self.english_only,
             "min_duration_seconds": self.min_duration_seconds,
             "max_duration_seconds": self.max_duration_seconds,
+            "non_english_keywords_count": len(self.non_english_keywords),
             "supported_search_types": self.get_supported_search_types()
         }

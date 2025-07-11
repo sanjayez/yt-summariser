@@ -12,9 +12,15 @@ export PYTHONUNBUFFERED=1
 export MALLOC_ARENA_MAX=4
 export PYTHONDONTWRITEBYTECODE=1
 
-# Kill any existing Celery workers
-echo "🧹 Cleaning up existing workers..."
+# Configuration
+WORKER_COUNT=${1:-3}  # Default to 3 workers, can be overridden
+START_FLOWER=${2:-"yes"}  # Default to starting Flower, pass "no" to disable
+FLOWER_PORT=${3:-5555}   # Default Flower port
+
+# Kill any existing Celery workers and Flower
+echo "🧹 Cleaning up existing workers and Flower..."
 pkill -f "celery.*worker" || true
+pkill -f "celery.*flower" || true
 sleep 2
 
 # Check Docker and Redis connection
@@ -42,9 +48,6 @@ fi
 
 echo "✅ Redis is running in Docker"
 
-# Number of workers (adjust based on your system)
-WORKER_COUNT=${1:-3}  # Default to 3 workers, can be overridden
-
 echo "🎬 Starting $WORKER_COUNT Celery workers for parallel processing..."
 
 # Start multiple workers in background
@@ -69,12 +72,64 @@ for i in $(seq 1 $WORKER_COUNT); do
 done
 
 echo "✅ Started $WORKER_COUNT parallel Celery workers"
-echo "📊 Monitor workers with: celery -A yt_summariser inspect active"
-echo "📋 Stop workers with: pkill -f 'celery.*worker'"
-echo "📄 Worker logs: /tmp/celery_worker*.log"
 
-# Optional: Start flower for monitoring (comment out if not needed)
-# echo "🌸 Starting Celery Flower monitoring..."
-# celery -A yt_summariser flower --port=5555 &
+# Start Flower monitoring if requested
+if [ "$START_FLOWER" = "yes" ]; then
+    echo "🌸 Starting Celery Flower monitoring..."
+    
+    # Check if this is likely a production environment
+    if [ -n "$DJANGO_ENV" ] && [ "$DJANGO_ENV" = "production" ]; then
+        # Production Flower with authentication and persistence
+        echo "🔒 Starting Flower in PRODUCTION mode with authentication..."
+        celery -A yt_summariser flower \
+            --port=$FLOWER_PORT \
+            --address=127.0.0.1 \
+            --max_tasks=10000 \
+            --db=flower_prod.db \
+            --persistent=True \
+            --basic_auth=admin:secure_flower_2024 \
+            --loglevel=warning \
+            --detach \
+            --pidfile=/tmp/flower.pid \
+            --logfile=/tmp/flower.log
+    else
+        # Development Flower - more open and verbose
+        echo "🛠️ Starting Flower in DEVELOPMENT mode..."
+        celery -A yt_summariser flower \
+            --port=$FLOWER_PORT \
+            --address=127.0.0.1 \
+            --max_tasks=5000 \
+            --db=flower_dev.db \
+            --persistent=True \
+            --loglevel=info \
+            --detach \
+            --pidfile=/tmp/flower.pid \
+            --logfile=/tmp/flower.log
+    fi
+    
+    # Wait a moment for Flower to start
+    sleep 3
+    
+    # Check if Flower started successfully
+    if curl -s http://localhost:$FLOWER_PORT > /dev/null 2>&1; then
+        echo "✅ Flower started successfully!"
+        echo "🌸 Monitor at: http://localhost:$FLOWER_PORT"
+        if [ -n "$DJANGO_ENV" ] && [ "$DJANGO_ENV" = "production" ]; then
+            echo "🔐 Use credentials: admin / secure_flower_2024"
+        fi
+    else
+        echo "⚠️ Flower may have failed to start. Check /tmp/flower.log"
+    fi
+else
+    echo "⏭️ Skipping Flower startup (disabled)"
+fi
+
+echo ""
+echo "📊 Monitor workers with: celery -A yt_summariser inspect active"
+echo "📋 Stop all with: pkill -f 'celery.*worker'; pkill -f 'celery.*flower'"
+echo "📄 Worker logs: /tmp/celery_worker*.log"
+if [ "$START_FLOWER" = "yes" ]; then
+    echo "🌸 Flower log: /tmp/flower.log"
+fi
 
 echo "🎉 Parallel processing ready!"

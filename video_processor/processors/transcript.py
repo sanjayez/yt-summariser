@@ -116,8 +116,9 @@ def extract_video_transcript(self, metadata_result, url_request_id):
         # Create transcript object with transaction
         with transaction.atomic():
             transcript_obj, created = VideoTranscript.objects.get_or_create(
-                video_id=video_id,
+                video_metadata=video_metadata,  # Use the foreign key for lookup
                 defaults={
+                    'video_id': video_id,  # Set the primary key
                     'transcript_text': '',
                     'status': 'processing'
                 }
@@ -194,8 +195,9 @@ def extract_video_transcript(self, metadata_result, url_request_id):
             try:
                 video_metadata = VideoMetadata.objects.get(url_request__id=url_request_id)
                 VideoTranscript.objects.update_or_create(
-                    video_id=video_metadata.video_id,
+                    video_metadata=video_metadata,  # Use the foreign key for lookup
                     defaults={
+                        'video_id': video_metadata.video_id,  # Set the primary key
                         'transcript_text': '',
                         'status': 'failed'
                     }
