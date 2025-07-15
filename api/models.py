@@ -22,6 +22,12 @@ class URLRequestTable(models.Model):
     url = models.URLField(max_length=500)
     ip_address = models.GenericIPAddressField()
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='processing')
+    celery_task_id = models.CharField(
+        max_length=255,
+        null=True,
+        blank=True,
+        help_text="ID of the main Celery task processing this video"
+    )
     created_at = models.DateTimeField(auto_now_add=True)
     
     def __str__(self):

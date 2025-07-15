@@ -17,14 +17,14 @@ def transcript_health_check(request):
         successful_transcripts = VideoTranscript.objects.filter(status='success').count()
         transcripts_with_data = VideoTranscript.objects.filter(
             status='success',
-            transcript_data__isnull=False
-        ).count()
+            transcript_text__isnull=False
+        ).exclude(transcript_text='').count()
         
         health_status = {
             'total_transcripts': total_transcripts,
             'successful_transcripts': successful_transcripts,
-            'transcripts_with_timestamps': transcripts_with_data,
-            'timestamp_coverage': round(
+            'transcripts_with_text': transcripts_with_data,
+            'text_coverage': round(
                 (transcripts_with_data / successful_transcripts * 100) if successful_transcripts > 0 else 0, 2
             ),
             'status': 'healthy' if transcripts_with_data == successful_transcripts else 'degraded'

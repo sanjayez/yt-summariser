@@ -43,15 +43,18 @@ ALLOWED_HOSTS = os.getenv('ALLOWED_HOSTS', 'localhost,127.0.0.1,yt-summariser-a7
 # Application definition
 
 INSTALLED_APPS = [
+    'daphne',
     'django.contrib.admin',
     'django.contrib.auth',
     'django.contrib.contenttypes',
     'django.contrib.sessions',
     'django.contrib.messages',
     'django.contrib.staticfiles',
+    'channels',
     'corsheaders',
     'rest_framework',
     'django_celery_results',
+    'celery_progress',
     'api',
     'video_processor',
     'topic',
@@ -87,6 +90,7 @@ TEMPLATES = [
 ]
 
 WSGI_APPLICATION = 'yt_summariser.wsgi.application'
+ASGI_APPLICATION = 'yt_summariser.asgi.application'
 
 
 # Database
@@ -212,6 +216,16 @@ CORS_ALLOW_HEADERS = [
     'cache-control',
 ]
 
+# Channels Configuration
+CHANNEL_LAYERS = {
+    'default': {
+        'BACKEND': 'channels_redis.core.RedisChannelLayer',
+        'CONFIG': {
+            "hosts": [('127.0.0.1', 6379)],
+        },
+    },
+}
+
 # ============================================================================
 # EMBEDDING SERVICES CONFIGURATION
 # ============================================================================
@@ -243,25 +257,31 @@ PINECONE_CONFIG = {
 EMBEDDING_CONFIG = {
     'chunk_size': int(os.getenv('EMBEDDING_CHUNK_SIZE', '512')),
     'chunk_overlap': int(os.getenv('EMBEDDING_CHUNK_OVERLAP', '50')),
-    'min_chunk_size': int(os.getenv('EMBEDDING_MIN_CHUNK_SIZE', '100')),
-    'include_descriptions': os.getenv('EMBEDDING_INCLUDE_DESCRIPTIONS', 'true').lower() == 'true',
-    'batch_processing_size': int(os.getenv('EMBEDDING_BATCH_SIZE', '10')),
-    'timestamp_granularity': os.getenv('EMBEDDING_TIMESTAMP_GRANULARITY', 'segment'),  # 'segment' or 'chunk'
+    'batch_size': int(os.getenv('EMBEDDING_BATCH_SIZE', '100')),
+    'max_workers': int(os.getenv('EMBEDDING_MAX_WORKERS', '4')),
 }
 
 # Search Configuration
 SEARCH_CONFIG = {
-    'default_top_k': int(os.getenv('SEARCH_DEFAULT_TOP_K', '10')),
-    'max_top_k': int(os.getenv('SEARCH_MAX_TOP_K', '50')),
-    'similarity_threshold': float(os.getenv('SEARCH_SIMILARITY_THRESHOLD', '0.45')),
+    'enable_semantic_search': os.getenv('ENABLE_SEMANTIC_SEARCH', 'true').lower() == 'true',
+    'search_results_limit': int(os.getenv('SEARCH_RESULTS_LIMIT', '10')),
+    'similarity_threshold': float(os.getenv('SIMILARITY_THRESHOLD', '0.7')),
     'timestamp_context_window': int(os.getenv('SEARCH_TIMESTAMP_CONTEXT', '30')),  # seconds
 }
+
+# ============================================================================
+# TRANSCRIPT EXTRACTION CONFIGURATION
+# ============================================================================
+
+# Decodo API Configuration (replaces scrape.do and yt-dlp)
+DECODO_AUTH_TOKEN = os.getenv('DECODO_AUTH_TOKEN')
 
 # Validation - Check for required environment variables in production
 if not DEBUG:
     required_env_vars = {
         'OPENAI_API_KEY': OPENAI_API_KEY,
         'PINECONE_API_KEY': PINECONE_CONFIG['api_key'],
+        'DECODO_AUTH_TOKEN': DECODO_AUTH_TOKEN,
     }
     
     missing_vars = [var for var, value in required_env_vars.items() if not value]

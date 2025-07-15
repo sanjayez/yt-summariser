@@ -8,6 +8,7 @@ Implements 4-layer embedding strategy for comprehensive video content search:
 """
 
 from celery import shared_task
+from celery_progress.backend import ProgressRecorder
 from django.db import transaction
 import logging
 import asyncio
@@ -240,16 +241,28 @@ def embed_video_content_sync(video_metadata: VideoMetadata, transcript: VideoTra
 @shared_task(bind=True,
              name='video_processor.embed_video_content',
              autoretry_for=(Exception,),
-             retry_backoff=YOUTUBE_CONFIG['RETRY_CONFIG']['transcript']['backoff'],
-             retry_jitter=YOUTUBE_CONFIG['RETRY_CONFIG']['transcript']['jitter'],
-             retry_kwargs=YOUTUBE_CONFIG['RETRY_CONFIG']['transcript'])
+             retry_backoff=YOUTUBE_CONFIG['RETRY_CONFIG']['embedding']['backoff'],
+             retry_jitter=YOUTUBE_CONFIG['RETRY_CONFIG']['embedding']['jitter'],
+             retry_kwargs=YOUTUBE_CONFIG['RETRY_CONFIG']['embedding'])
 @idempotent_task
 def embed_video_content(self, summary_result, url_request_id):
     """
     Embed video content using 4-layer strategy after summary generation.
-    This task runs after video summary has been generated.
+    
+    Args:
+        summary_result (dict): Result from previous summary generation task
+        url_request_id (int): ID of the URLRequestTable to process
+        
+    Returns:
+        dict: Embedding results with total items embedded and processing stats
+        
+    Raises:
+        Exception: If embedding process fails after retries
     """
     try:
+        # Set initial progress
+        progress_recorder = ProgressRecorder(self)
+        progress_recorder.set_progress(0, 100, "Generating embeddings")
         update_task_progress(self, TASK_STATES.get('EMBEDDING_CONTENT', 'Embedding Content'), 10)
         
         # Get video metadata and transcript
@@ -291,6 +304,9 @@ def embed_video_content(self, summary_result, url_request_id):
                    f"{embedding_result['total_embedded']}/{embedding_result['total_items']} items embedded")
         
         update_task_progress(self, TASK_STATES.get('EMBEDDING_CONTENT', 'Embedding Content'), 100)
+        
+        # Set final progress
+        progress_recorder.set_progress(100, 100, "Embeddings complete")
         
         return embedding_result
         

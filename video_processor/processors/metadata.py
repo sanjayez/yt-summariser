@@ -1,7 +1,8 @@
-from celery import shared_task
 import yt_dlp
-from django.db import transaction
 import logging
+from celery import shared_task
+from celery_progress.backend import ProgressRecorder
+from django.db import transaction
 from datetime import datetime
 
 from api.models import URLRequestTable
@@ -35,153 +36,145 @@ def extract_thumbnail_url(info):
     best_thumbnail = max(thumbnails, key=lambda x: x.get('width', 0) * x.get('height', 0), default={})
     return best_thumbnail.get('url', '')
 
-# Task 1: Extract Video Metadata
-@shared_task(bind=True,
-             name='video_processor.extract_video_metadata',
-             autoretry_for=(Exception,), 
-             retry_backoff=YOUTUBE_CONFIG['RETRY_CONFIG']['metadata']['backoff'],
-             retry_jitter=YOUTUBE_CONFIG['RETRY_CONFIG']['metadata']['jitter'],
-             retry_kwargs=YOUTUBE_CONFIG['RETRY_CONFIG']['metadata'])
-@idempotent_task
+def fallback_yt_dlp_extraction(url):
+    """Fallback metadata extraction using yt-dlp"""
+    logger.info(f"Using yt-dlp fallback for metadata extraction: {url}")
+    
+    ydl_opts = {
+        'quiet': True,
+        'no_warnings': True,
+        'skip_download': True,
+        'extract_flat': False,
+    }
+    
+    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+        info = ydl.extract_info(url, download=False)
+    
+    return info
+
+# Task 1: Extract Video Metadata  
+@shared_task(bind=True, max_retries=3, default_retry_delay=60)
 def extract_video_metadata(self, url_request_id):
     """
-    Atomic task: Extract video metadata using yt-dlp with timeout protection.
+    Extract metadata for a YouTube video using yt-dlp.
+    
+    Args:
+        url_request_id (int): ID of the URLRequestTable to process
+        
+    Returns:
+        dict: Video metadata with video_id and title
+        
+    Raises:
+        Exception: If metadata extraction fails after retries
     """
     try:
-        # Update progress
-        update_task_progress(self, TASK_STATES['EXTRACTING_METADATA'], 10)
+        # Get the URL request
+        url_request = URLRequestTable.objects.get(id=url_request_id)
         
-        # Optimized query with select_related
-        url_request = URLRequestTable.objects.select_related('video_metadata').get(id=url_request_id)
+        logger.info(f"Starting metadata extraction for request {url_request_id}")
+        logger.info(f"Extracting metadata for {url_request.url}")
         
-        logger.info(f"Extracting metadata for request {url_request_id}")
+        # Extract metadata using yt-dlp
+        ydl_opts = {
+            'quiet': True,
+            'no_warnings': True,
+            'skip_download': True,
+            'extract_flat': False,
+        }
         
-        # Extract video info with timeout protection
-        with timeout(YOUTUBE_CONFIG['TASK_TIMEOUTS']['metadata_timeout'], "Metadata extraction"):
-            with yt_dlp.YoutubeDL(YOUTUBE_CONFIG['YDL_OPTS']) as ydl:
-                info = ydl.extract_info(url_request.url, download=False)
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(url_request.url, download=False)
         
-        # Validate extracted info
-        validated_info = validate_video_info(info)
+        logger.info(f"Successfully extracted metadata for {info.get('title', 'Unknown')}")
         
-        update_task_progress(self, TASK_STATES['EXTRACTING_METADATA'], 50)
+        # Parse the metadata
+        metadata = {
+            'id': info.get('id'),  # For validation
+            'title': info.get('title', '').strip(),
+            'description': info.get('description', ''),
+            'duration': info.get('duration'),
+            'channel_name': info.get('uploader', ''),
+            'view_count': info.get('view_count'),
+            'upload_date': parse_upload_date(info.get('upload_date')),
+            'language': info.get('language', 'en'),
+            'like_count': info.get('like_count'),
+            'channel_id': info.get('uploader_id', ''),
+            'tags': info.get('tags', []) or [],
+            'categories': info.get('categories', []) or [],
+            'thumbnail': info.get('thumbnail', ''),
+            'channel_follower_count': info.get('uploader_subscriber_count'),
+            'channel_is_verified': info.get('uploader_verified', False),
+            'uploader_id': info.get('uploader_id', ''),
+        }
         
-        # Database operations with transaction
+        # Validate metadata
+        validate_video_info(metadata)
+        
+        # Save to database with transaction
         with transaction.atomic():
-            video_id = validated_info.get('id')
-            
-            # Check if VideoMetadata with this video_id already exists
-            existing_metadata = None
-            if video_id:
-                existing_metadata = VideoMetadata.objects.filter(video_id=video_id).first()
-            
-            if existing_metadata and existing_metadata.url_request != url_request:
-                # Video already exists for different request - link this request to existing metadata
-                logger.info(f"Video {video_id} already exists, linking request {url_request_id} to existing metadata")
-                
-                # Delete any incomplete metadata for this request
-                VideoMetadata.objects.filter(url_request=url_request).delete()
-                
-                # Update the existing metadata to point to this request (if it's more recent)
-                if url_request.created_at > existing_metadata.url_request.created_at:
-                    existing_metadata.url_request = url_request
-                    existing_metadata.save()
-                
-                metadata_obj = existing_metadata
-            else:
-                # Create or update metadata normally
-                metadata_obj, created = VideoMetadata.objects.get_or_create(
-                    url_request=url_request,
-                    defaults={
-                        # Existing fields
-                        'video_id': video_id,
-                        'title': validated_info.get('title', ''),
-                        'description': validated_info.get('description', ''),
-                        'duration': validated_info.get('duration'),
-                        'channel_name': validated_info.get('uploader') or validated_info.get('channel', ''),
-                        'view_count': validated_info.get('view_count'),
-                        
-                        # New fields from YouTube API
-                        'upload_date': parse_upload_date(validated_info.get('upload_date')),
-                        'language': validated_info.get('language', 'en'),
-                        'like_count': validated_info.get('like_count'),
-                        'channel_id': validated_info.get('channel_id', ''),
-                        'tags': validated_info.get('tags', []),
-                        'categories': validated_info.get('categories', []),
-                        'thumbnail': extract_thumbnail_url(validated_info),
-                        'channel_follower_count': validated_info.get('channel_follower_count'),
-                        'channel_is_verified': validated_info.get('channel_is_verified', False),
-                        'uploader_id': validated_info.get('uploader_id', ''),
-                        
-                        'status': 'processing'
-                    }
-                )
-                
-                # Update metadata if it already existed
-                if not created:
-                    # Existing fields
-                    metadata_obj.video_id = video_id
-                    metadata_obj.title = validated_info.get('title', '')
-                    metadata_obj.description = validated_info.get('description', '')
-                    metadata_obj.duration = validated_info.get('duration')
-                    metadata_obj.channel_name = validated_info.get('uploader') or validated_info.get('channel', '')
-                    metadata_obj.view_count = validated_info.get('view_count')
-                    
-                    # New fields from YouTube API
-                    metadata_obj.upload_date = parse_upload_date(validated_info.get('upload_date'))
-                    metadata_obj.language = validated_info.get('language', 'en')
-                    metadata_obj.like_count = validated_info.get('like_count')
-                    metadata_obj.channel_id = validated_info.get('channel_id', '')
-                    metadata_obj.tags = validated_info.get('tags', [])
-                    metadata_obj.categories = validated_info.get('categories', [])
-                    metadata_obj.thumbnail = extract_thumbnail_url(validated_info)
-                    metadata_obj.channel_follower_count = validated_info.get('channel_follower_count')
-                    metadata_obj.channel_is_verified = validated_info.get('channel_is_verified', False)
-                    metadata_obj.uploader_id = validated_info.get('uploader_id', '')
-                    
-                    metadata_obj.status = 'processing'
-            
-            # Mark metadata as successful
-            metadata_obj.status = 'success'
-            metadata_obj.save()
+            video_metadata = VideoMetadata.objects.create(
+                video_id=metadata['id'],  # Convert id to video_id for database
+                title=metadata['title'][:255],  # Ensure title fits in field
+                description=metadata['description'],
+                duration=metadata['duration'],
+                channel_name=metadata['channel_name'][:100],  # Ensure channel name fits
+                view_count=metadata['view_count'],
+                upload_date=metadata['upload_date'],
+                language=metadata['language'][:10],  # Ensure language fits
+                like_count=metadata['like_count'],
+                channel_id=metadata['channel_id'][:100],  # Ensure channel ID fits
+                tags=metadata['tags'],
+                categories=metadata['categories'],
+                thumbnail=metadata['thumbnail'],
+                channel_follower_count=metadata['channel_follower_count'],
+                channel_is_verified=metadata['channel_is_verified'],
+                uploader_id=metadata['uploader_id'][:100],  # Ensure uploader ID fits
+                url_request=url_request,
+                status=TASK_STATES['COMPLETED']
+            )
         
-        video_id = validated_info.get('id')
-        update_task_progress(self, TASK_STATES['EXTRACTING_METADATA'], 100)
+        logger.info(f"Metadata extraction completed successfully for video {metadata['id']}")
         
-        logger.info(f"Successfully extracted metadata for: {validated_info.get('title', 'Unknown')}")
+        # Return the expected format for workflow chain
+        return {
+            'video_id': metadata['id'], 
+            'title': metadata['title']
+        }
         
-        # Return video_id for next task in chain
-        return {'video_id': video_id, 'title': validated_info.get('title', 'Unknown')}
+    except yt_dlp.utils.DownloadError as e:
+        error_msg = f"yt-dlp error: {str(e)}"
+        logger.error(f"yt-dlp error for request {url_request_id}: {error_msg}")
+        
+        # Update URL request status
+        url_request.status = TASK_STATES['FAILED_PERMANENTLY']
+        url_request.save()
+        
+        # Handle specific errors
+        if 'Video unavailable' in str(e):
+            raise self.retry(countdown=120, exc=e)
+        elif 'Private video' in str(e):
+            raise Exception(f"Private video - cannot extract: {str(e)}")
+        else:
+            raise self.retry(countdown=60, exc=e)
+            
+    except URLRequestTable.DoesNotExist:
+        logger.error(f"URLRequestTable {url_request_id} not found")
+        raise Exception(f"URL request {url_request_id} not found")
         
     except Exception as e:
-        logger.error(f"Metadata extraction failed for request {url_request_id}: {str(e)}")
+        logger.error(f"Unexpected error in metadata extraction for {url_request_id}: {str(e)}")
         
-        # Handle failure with transaction
-        with transaction.atomic():
-            try:
-                url_request = URLRequestTable.objects.get(id=url_request_id)
-                
-                # Check if a VideoMetadata already exists for this URL request
-                existing_metadata = VideoMetadata.objects.filter(url_request=url_request).first()
-                
-                if existing_metadata:
-                    # Update existing metadata status
-                    existing_metadata.status = 'failed'
-                    existing_metadata.save()
-                else:
-                    # Only create a new metadata record if we can provide a proper video_id
-                    # For failed extractions, we'll update the URLRequest status instead
-                    url_request.status = 'failed'
-                    url_request.save()
-                    
-                    # Don't create a VideoMetadata record with empty video_id
-                    logger.warning(f"Not creating VideoMetadata record for failed extraction (request {url_request_id})")
-                    
-            except Exception as db_error:
-                logger.error(f"Failed to update metadata status: {db_error}")
-        
-        # Handle dead letter queue on final failure
-        if self.request.retries >= self.max_retries:
-            handle_dead_letter_task('extract_video_metadata', self.request.id, [url_request_id], {}, e)
-        
-        raise 
+        try:
+            url_request = URLRequestTable.objects.get(id=url_request_id)
+            url_request.status = TASK_STATES['FAILED_PERMANENTLY']
+            url_request.save()
+        except:
+            pass
+            
+        # Retry on certain errors
+        if self.request.retries < self.max_retries:
+            logger.info(f"Retrying metadata extraction for {url_request_id} (attempt {self.request.retries + 1})")
+            raise self.retry(countdown=60, exc=e)
+        else:
+            logger.error(f"Max retries exceeded for metadata extraction {url_request_id}")
+            raise e 

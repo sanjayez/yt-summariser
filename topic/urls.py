@@ -5,6 +5,7 @@ urlpatterns = [
     # Unified search and process endpoint
     path('search/', views.IntegratedSearchProcessAPIView.as_view(), name='topic_search_process'),
     
-    # Status tracking endpoint
-    path('search/status/<uuid:search_request_id>/', views.SearchStatusAPIView.as_view(), name='search_status'),
+    # SSE endpoints
+    path('test/sse/', views.simple_sse_test, name='simple_sse_test'),
+    path('search/status/<uuid:search_request_id>/stream/', views.search_status_stream, name='search_status_stream'),
 ]

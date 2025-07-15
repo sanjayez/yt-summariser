@@ -2,18 +2,9 @@
 
 # YouTube API Configuration
 YOUTUBE_CONFIG = {
-    'YDL_OPTS': {
-        'quiet': True,
-        'no_warnings': True,
-        'socket_timeout': 30,
-        'retries': 2,
-        'extract_flat': False,
-        'writesubtitles': False,
-        'writeautomaticsub': False,
-    },
     'TASK_TIMEOUTS': {
         'metadata_timeout': 300,  # 5 minutes
-        'transcript_timeout': 180,  # 3 minutes
+        'transcript_timeout': 180,  # 3 minutes - Decodo is much faster
         'status_update_timeout': 30,  # 30 seconds
     },
     'RETRY_CONFIG': {
@@ -29,12 +20,37 @@ YOUTUBE_CONFIG = {
             'backoff': True,
             'jitter': True,
         },
+        'summary': {
+            'max_retries': 3,
+            'countdown': 45,
+            'backoff': True,
+            'jitter': True,
+        },
+        'embedding': {
+            'max_retries': 2,
+            'countdown': 60,
+            'backoff': True,
+            'jitter': True,
+        },
         'status_update': {
             'max_retries': 5,
             'countdown': 5,
             'backoff': False,
             'jitter': False,
         }
+    }
+}
+
+# Decodo Configuration
+DECODO_CONFIG = {
+    'API': {
+        'timeout': 30,  # 30 second timeout for Decodo requests
+        'max_retries': 2,
+    },
+    'LANGUAGE_HANDLING': {
+        'default_language': 'en',
+        'fallback_languages': ['en', 'es', 'fr', 'de', 'it', 'pt'],
+        'auto_detect': True,  # Try to detect video language first
     }
 }
 

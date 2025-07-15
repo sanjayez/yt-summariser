@@ -1,4 +1,4 @@
-from celery import shared_task, chain, group, chord
+from celery import shared_task, chain, group
 import logging
 
 from api.models import URLRequestTable
@@ -12,31 +12,35 @@ from .status import update_overall_status
 
 logger = logging.getLogger(__name__)
 
-# Main entry point - creates task chain
+
 @shared_task(bind=True, name='video_processor.process_youtube_video')
 def process_youtube_video(self, url_request_id):
     """
-    Entry point that creates and executes the enhanced video processing chain.
+    Process a single YouTube video through the complete pipeline.
     
-    New workflow:
-    1. Extract video metadata
-    2. Extract transcript (parallel with metadata if needed)
-    3. Generate video summary (requires transcript)
-    4. Embed all content (requires summary for complete 4-layer embedding)
-    5. Update overall status
+    Executes the full workflow: metadata → transcript → summary → embedding → status update
     
-    Uses Celery's chain primitive for proper task orchestration.
+    Args:
+        url_request_id (int): ID of the URLRequestTable to process
+        
+    Returns:
+        str: Success message with request ID
+        
+    Raises:
+        Exception: If workflow initiation fails
     """
     try:
-        # Validate input
+        # Validate input and get URL request
         url_request = URLRequestTable.objects.select_related('video_metadata').get(id=url_request_id)
-        
-        # Validate URL
         validate_youtube_url(url_request.url)
         
-        logger.info(f"Starting enhanced video processing pipeline for request {url_request_id}")
+        # Store task ID for progress tracking
+        url_request.celery_task_id = self.request.id
+        url_request.save()
         
-        # Enhanced workflow: metadata → transcript → summary → embed → status
+        logger.info(f"Starting video processing pipeline for request {url_request_id}")
+        
+        # Execute workflow chain: each task receives previous result as first argument
         workflow = chain(
             extract_video_metadata.s(url_request_id),
             extract_video_transcript.s(url_request_id),
@@ -45,11 +49,10 @@ def process_youtube_video(self, url_request_id):
             update_overall_status.s(url_request_id)
         )
         
-        # Execute workflow
-        result = workflow.apply_async()
+        workflow.apply_async()
         
-        logger.info(f"Initiated enhanced processing pipeline for request {url_request_id}")
-        return f"Initiated enhanced processing pipeline for request {url_request_id}"
+        logger.info(f"Initiated processing pipeline for request {url_request_id}")
+        return f"Initiated complete processing pipeline for request {url_request_id}"
         
     except Exception as e:
         logger.error(f"Failed to initiate processing pipeline for {url_request_id}: {e}")
@@ -60,13 +63,12 @@ def process_youtube_video(self, url_request_id):
 @shared_task(bind=True, name='video_processor.process_parallel_videos')
 def process_parallel_videos(self, url_request_ids):
     """
-    Process multiple videos in parallel using Celery groups.
+    Process multiple videos in parallel.
     
-    This task is designed for parallel processing of search results,
-    where multiple videos need to be processed simultaneously.
+    Each video goes through the complete pipeline independently and concurrently.
     
     Args:
-        url_request_ids: List of URLRequestTable IDs to process
+        url_request_ids (list): List of URLRequestTable IDs to process
         
     Returns:
         dict: Processing result with parallel job information
@@ -78,15 +80,14 @@ def process_parallel_videos(self, url_request_ids):
         existing_requests = URLRequestTable.objects.filter(id__in=url_request_ids)
         if existing_requests.count() != len(url_request_ids):
             missing_ids = set(url_request_ids) - set(existing_requests.values_list('id', flat=True))
-            error_msg = f"Missing URLRequestTable entries: {missing_ids}"
-            logger.error(error_msg)
+            logger.error(f"Missing URLRequestTable entries: {missing_ids}")
             return {
                 'status': 'failed',
                 'error': 'Missing URL request entries',
                 'missing_ids': list(missing_ids)
             }
         
-        # Create group of video processing tasks
+        # Create parallel group of individual video processing tasks
         video_processing_group = group(
             process_youtube_video.s(url_request_id) for url_request_id in url_request_ids
         )
@@ -100,7 +101,8 @@ def process_parallel_videos(self, url_request_ids):
             'status': 'processing',
             'group_id': result.id,
             'total_videos': len(url_request_ids),
-            'url_request_ids': url_request_ids
+            'url_request_ids': url_request_ids,
+            'processing_type': 'parallel'
         }
         
     except Exception as e:

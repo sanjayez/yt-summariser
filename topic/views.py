@@ -1,10 +1,16 @@
 from rest_framework.views import APIView
 from rest_framework.response import Response
+from rest_framework.decorators import api_view
 from rest_framework import status
 from rest_framework.exceptions import ValidationError, APIException
 from django.db import transaction
 from django.db.models import Q, Count, Case, When
+from django.http import StreamingHttpResponse
 import logging
+import json
+import time
+from celery_progress.backend import Progress
+from celery.result import AsyncResult
 
 from topic.utils.session_utils import get_or_create_session
 from topic.models import SearchRequest as SearchRequestModel
@@ -207,12 +213,8 @@ class SearchAndProcessAPIView(APIView):
                 search_task = process_search_query.delay(str(search_request.request_id))
                 logger.info(f"Dispatched search task {search_task.id}")
                 
-                # Wait briefly for search to complete (or timeout)
-                # This is a simplified approach - in production you might want to poll
-                import time
-                time.sleep(2)
-                
-                # Refresh search request to get results
+                # Refresh search request to get initial results
+                # Note: Search processing happens asynchronously, so initial video_urls may be empty
                 search_request.refresh_from_db()
                 
                 video_requests = []
@@ -354,109 +356,196 @@ class ParallelSearchProcessAPIView(APIView):
             )
 
 
-class SearchStatusAPIView(APIView):
+def simple_sse_test(request):
     """
-    Check the status of a search request and its video processing.
+    Simple sync SSE test endpoint for basic verification.
     """
+    def event_stream():
+        # Send connection confirmation
+        yield f"data: {json.dumps({
+            'type': 'connected',
+            'message': 'Simple SSE test connection established',
+            'timestamp': time.time()
+        })}\n\n"
+        
+        # Send test data
+        for i in range(5):
+            time.sleep(1)
+            yield f"data: {json.dumps({
+                'type': 'test_data',
+                'count': i + 1,
+                'message': f'Test message {i + 1}',
+                'timestamp': time.time()
+            })}\n\n"
+        
+        # Send completion message
+        yield f"data: {json.dumps({
+            'type': 'completed',
+            'message': 'Simple SSE test completed successfully',
+            'timestamp': time.time()
+        })}\n\n"
     
-    def get(self, request, search_request_id):
-        """Get detailed status of search request and video processing"""
+    response = StreamingHttpResponse(event_stream(), content_type='text/event-stream')
+    response['Cache-Control'] = 'no-cache'
+    response['Access-Control-Allow-Origin'] = '*'
+    response['Access-Control-Allow-Headers'] = 'Cache-Control'
+    response['Connection'] = 'keep-alive'
+    return response
+
+
+@api_view(['GET'])
+def search_status_stream(request, search_request_id):
+    """
+    Server-Sent Events endpoint for real-time search and video processing status.
+    """
+    def event_stream():
         try:
-            logger.info(f"Checking status for search request {search_request_id}")
+            logger.info(f"Starting SSE stream for search request {search_request_id}")
             
-            # Get search request
-            try:
-                search_request = SearchRequestModel.objects.select_related('search_session').get(
-                    request_id=search_request_id
-                )
-            except SearchRequestModel.DoesNotExist:
-                return Response(
-                    {'error': 'Search request not found'}, 
-                    status=status.HTTP_404_NOT_FOUND
-                )
+            max_polls = 150  # Maximum number of polling attempts (5 minutes at 2s intervals)
+            poll_count = 0
             
-            # Get URL requests linked to this search
-            url_requests = URLRequestTable.objects.filter(
-                search_request=search_request
-            ).select_related('video_metadata')
-            
-            # Calculate progress statistics
-            total_videos = url_requests.count()
-            completed_videos = url_requests.filter(status__in=['success', 'failed']).count()
-            successful_videos = url_requests.filter(status='success').count()
-            failed_videos = url_requests.filter(status='failed').count()
-            processing_videos = url_requests.filter(status='processing').count()
-            
-            # Calculate progress percentage
-            progress_percentage = (completed_videos / total_videos * 100) if total_videos > 0 else 0
-            
-            # Get video details
-            video_details = []
-            for url_request in url_requests:
-                video_detail = {
-                    'request_id': str(url_request.request_id),
-                    'url': url_request.url,
-                    'status': url_request.status,
-                    'video_id': None,
-                    'title': None,
-                    'processing_stages': {
-                        'metadata': 'pending',
-                        'transcript': 'pending',
-                        'summary': 'pending',
-                        'embedding': 'pending'
-                    }
-                }
+            while poll_count < max_polls:
+                poll_count += 1
                 
-                # Add video metadata if available
-                if hasattr(url_request, 'video_metadata') and url_request.video_metadata:
-                    video_metadata = url_request.video_metadata
-                    video_detail['video_id'] = video_metadata.video_id
-                    video_detail['title'] = video_metadata.title
-                    
-                    # Update processing stages based on video metadata and transcript
-                    video_detail['processing_stages']['metadata'] = video_metadata.status
-                    
-                    # Check transcript status
-                    try:
-                        transcript = video_metadata.video_transcript
-                        if transcript:
-                            video_detail['processing_stages']['transcript'] = transcript.status
-                            if transcript.summary:
-                                video_detail['processing_stages']['summary'] = 'success'
-                            if video_metadata.is_embedded:
-                                video_detail['processing_stages']['embedding'] = 'success'
-                    except:
-                        pass
+                # Get search request
+                try:
+                    search_request = SearchRequestModel.objects.select_related('search_session').get(
+                        request_id=search_request_id
+                    )
+                except SearchRequestModel.DoesNotExist:
+                    yield f"data: {json.dumps({
+                        'type': 'error',
+                        'message': 'Search request not found'
+                    })}\n\n"
+                    break
                 
-                video_details.append(video_detail)
+                # Get URL requests linked to this search
+                url_requests = URLRequestTable.objects.filter(
+                    search_request=search_request
+                ).exclude(celery_task_id__isnull=True).select_related('video_metadata')
+                
+                if not url_requests.exists():
+                    yield f"data: {json.dumps({
+                        'type': 'waiting',
+                        'message': 'Waiting for video processing to start...',
+                        'poll_count': poll_count
+                    })}\n\n"
+                    time.sleep(2)
+                    continue
+                
+                total_progress = 0
+                video_count = 0
+                video_progress_data = []
+                completed_count = 0
+                
+                for url_request in url_requests:
+                    video_count += 1
+                    current_progress = 0
+                    description = 'Starting...'
+                    status_val = url_request.status
+                    
+                    # Get video metadata for title
+                    video_title = None
+                    if hasattr(url_request, 'video_metadata') and url_request.video_metadata:
+                        video_title = url_request.video_metadata.title
+                    
+                    # Determine progress based on status
+                    if url_request.status in ['success', 'failed']:
+                        current_progress = 100
+                        completed_count += 1
+                        description = 'Completed successfully' if url_request.status == 'success' else 'Processing failed'
+                    elif url_request.celery_task_id:
+                        # Get progress from celery for in-progress tasks
+                        try:
+                            async_result = AsyncResult(url_request.celery_task_id)
+                            progress_obj = Progress(async_result)
+                            progress_info = progress_obj.get_info()
+                            
+                            if progress_info:
+                                current_progress = progress_info.get('current', 0)
+                                description = progress_info.get('description', 'Processing...')
+                                
+                                # Check if task is actually complete
+                                if async_result.state in ['SUCCESS', 'FAILURE']:
+                                    current_progress = 100
+                                    completed_count += 1
+                                    if async_result.state == 'SUCCESS':
+                                        description = 'Completed successfully'
+                                    else:
+                                        description = 'Processing failed'
+                        except Exception as e:
+                            logger.error(f"Error getting progress for task {url_request.celery_task_id}: {e}")
+                            description = 'Error checking progress'
+                    
+                    total_progress += current_progress
+                    video_progress_data.append({
+                        'video_id': str(url_request.request_id),
+                        'url': url_request.url,
+                        'title': video_title,
+                        'progress': current_progress,
+                        'description': description,
+                        'status': status_val
+                    })
+                
+                # Calculate overall progress
+                overall_progress = (total_progress / video_count) if video_count > 0 else 0
+                
+                # Send overall progress
+                yield f"data: {json.dumps({
+                    'type': 'progress_update',
+                    'search_request_id': str(search_request.request_id),
+                    'overall_progress': round(overall_progress, 2),
+                    'completed_videos': completed_count,
+                    'total_videos': video_count,
+                    'videos': video_progress_data,
+                    'query': search_request.original_query,
+                    'poll_count': poll_count
+                })}\n\n"
+                
+                # Check if all processing is complete
+                if completed_count >= video_count and video_count > 0:
+                    # For already-failed videos, give frontend time to process updates
+                    # Only complete immediately after a few polls to avoid abrupt termination
+                    if poll_count >= 3:
+                        # Send final completion message
+                        successful_videos = len([v for v in video_progress_data if v['status'] == 'success'])
+                        failed_videos = len([v for v in video_progress_data if v['status'] == 'failed'])
+                        
+                        yield f"data: {json.dumps({
+                            'type': 'processing_completed',
+                            'search_request_id': str(search_request.request_id),
+                            'total_videos': video_count,
+                            'completed_videos': completed_count,
+                            'successful_videos': successful_videos,
+                            'failed_videos': failed_videos,
+                            'message': 'All video processing completed'
+                        })}\n\n"
+                        break
+                    
+                time.sleep(2)  # Poll every 2 seconds
             
-            # Prepare response
-            response_data = {
-                'search_request_id': str(search_request.request_id),
-                'session_id': str(search_request.search_session.session_id),
-                'query': search_request.original_query,
-                'processed_query': search_request.processed_query or '',
-                'status': search_request.status,
-                'error_message': search_request.error_message or '',
-                'total_videos': total_videos,
-                'completed_videos': completed_videos,
-                'successful_videos': successful_videos,
-                'failed_videos': failed_videos,
-                'processing_videos': processing_videos,
-                'progress_percentage': round(progress_percentage, 2),
-                'video_details': video_details,
-                'created_at': search_request.created_at.isoformat()
-            }
-            
-            # Return response directly for now (skip serializer for simplicity)
-            return Response(response_data, status=status.HTTP_200_OK)
+            # If we hit max polls, send timeout message
+            if poll_count >= max_polls:
+                yield f"data: {json.dumps({
+                    'type': 'timeout',
+                    'message': 'Stream timeout reached',
+                    'poll_count': poll_count
+                })}\n\n"
                 
         except Exception as e:
-            logger.error(f"Error in SearchStatusAPIView: {e}")
-            return Response(
-                {'error': f'Internal server error: {str(e)}'}, 
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR
-            )
+            logger.error(f"Error in SSE stream: {e}")
+            yield f"data: {json.dumps({
+                'type': 'error',
+                'message': f'Stream error: {str(e)}'
+            })}\n\n"
+    
+    response = StreamingHttpResponse(event_stream(), content_type='text/event-stream')
+    response['Cache-Control'] = 'no-cache'
+    response['Access-Control-Allow-Origin'] = '*'
+    response['Access-Control-Allow-Headers'] = 'Cache-Control'
+    response['Connection'] = 'keep-alive'
+    return response
 
 
 class IntegratedSearchProcessAPIView(APIView):
@@ -523,7 +612,7 @@ class IntegratedSearchProcessAPIView(APIView):
                 'status': 'processing',
                 'task_id': task.id,
                 'estimated_completion_time': timeout,
-                'status_check_url': f'/api/topic/search/status/{search_request.request_id}/'
+                'status_stream_url': f'/api/topic/search/status/{search_request.request_id}/stream/'
             }
             
             # Return response directly for now (skip serializer for simplicity)

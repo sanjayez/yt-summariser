@@ -4,6 +4,7 @@ Generates AI-powered summaries and key points from video transcripts using OpenA
 """
 
 from celery import shared_task
+from celery_progress.backend import ProgressRecorder
 from django.db import transaction
 import logging
 import json
@@ -272,16 +273,29 @@ Create a unified, well-structured summary with key points. Focus on the main the
 @shared_task(bind=True,
              name='video_processor.generate_video_summary',
              autoretry_for=(Exception,),
-             retry_backoff=YOUTUBE_CONFIG['RETRY_CONFIG']['transcript']['backoff'],
-             retry_jitter=YOUTUBE_CONFIG['RETRY_CONFIG']['transcript']['jitter'],
-             retry_kwargs=YOUTUBE_CONFIG['RETRY_CONFIG']['transcript'])
+             retry_backoff=YOUTUBE_CONFIG['RETRY_CONFIG']['summary']['backoff'],
+             retry_jitter=YOUTUBE_CONFIG['RETRY_CONFIG']['summary']['jitter'],
+             retry_kwargs=YOUTUBE_CONFIG['RETRY_CONFIG']['summary'])
 @idempotent_task
 def generate_video_summary(self, transcript_result, url_request_id):
     """
     Generate AI-powered summary and key points from video transcript.
-    This task runs after transcript extraction is complete.
+    
+    Args:
+        transcript_result (dict): Result from previous transcript extraction task
+        url_request_id (int): ID of the URLRequestTable to process
+        
+    Returns:
+        dict: Summary generation results with length and key points count
+        
+    Raises:
+        Exception: If summary generation fails after retries
     """
     try:
+        # Set initial progress
+        progress_recorder = ProgressRecorder(self)
+        progress_recorder.set_progress(0, 100, "Generating summary")
+        
         update_task_progress(self, TASK_STATES.get('GENERATING_SUMMARY', 'Generating Summary'), 10)
         
         # Get video metadata and transcript
@@ -323,6 +337,9 @@ def generate_video_summary(self, transcript_result, url_request_id):
             logger.info(f"Saved summary ({len(summary_text)} chars) and {len(key_points)} key points")
         
         update_task_progress(self, TASK_STATES.get('GENERATING_SUMMARY', 'Generating Summary'), 100)
+        
+        # Set final progress
+        progress_recorder.set_progress(100, 100, "Summary complete")
         
         result = {
             'summary_length': len(summary_text),

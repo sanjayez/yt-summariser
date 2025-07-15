@@ -258,8 +258,11 @@ def update_url_request_status(url_request):
             if video_transcript:
                 transcript_status = video_transcript.status
         
-        # If both exist and both are successful
-        if metadata_status == 'success' and transcript_status == 'success':
+        # If both exist and both are successful (handle both 'success' and 'completed' as success)
+        metadata_success = metadata_status in ['success', 'completed']
+        transcript_success = transcript_status == 'success'
+        
+        if metadata_success and transcript_success:
             url_request.status = 'success'
         # If either has failed
         elif metadata_status == 'failed' or transcript_status == 'failed':
