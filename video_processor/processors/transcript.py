@@ -1,18 +1,22 @@
 from celery import shared_task
 from celery_progress.backend import ProgressRecorder
 from django.db import transaction
+from django.utils import timezone
 import logging
 import time
 
 from api.models import URLRequestTable
 from ..models import VideoMetadata, VideoTranscript, TranscriptSegment
-from ..config import YOUTUBE_CONFIG, TASK_STATES
+from ..config import YOUTUBE_CONFIG, TRANSCRIPT_CONFIG
 from ..validators import validate_transcript_data
 from ..utils import (
-    timeout, idempotent_task, handle_dead_letter_task, 
-    update_task_progress
+    timeout, idempotent_task, handle_dead_letter_task
+)
+from ..utils.language_detection import (
+    should_update_language, detect_transcript_language, get_api_language
 )
 from ..services.decodo_service import extract_youtube_transcript
+from ..services.youtube_transcript_service import extract_youtube_transcript_fallback
 
 logger = logging.getLogger(__name__)
 
@@ -88,6 +92,64 @@ def extract_transcript_with_decodo(video_id, primary_language='en'):
     # If all languages fail, raise exception
     raise Exception(f"No transcript found for video {video_id} in any supported language")
 
+def extract_transcript_with_fallback(video_id: str, language: str) -> tuple[dict, str, str]:
+    """
+    Extract transcript using fallback strategy:
+    1. Try Decodo API
+    2. If fails, try YouTube Transcript API
+    3. If both fail, raise exception
+    
+    Returns:
+        Tuple of (transcript_data, used_language, source)
+    """
+    
+    logger.info(f"Starting transcript extraction with fallback for {video_id}")
+    
+    # Method 1: Try Decodo API (existing)
+    if TRANSCRIPT_CONFIG['DECODO']['enabled']:
+        try:
+            logger.info(f"Attempting Decodo extraction for {video_id}")
+            transcript_data, used_language = extract_transcript_with_decodo(video_id, language)
+            
+            if transcript_data:
+                logger.info(f"✅ Decodo extraction successful for {video_id}")
+                # Convert Decodo format to our standard format
+                result = {
+                    'success': True,
+                    'transcript_text': ' '.join([segment.get('text', '') for segment in transcript_data]),
+                    'segments': transcript_data,
+                    'language': used_language,
+                    'source': 'decodo',
+                    'segment_count': len(transcript_data),
+                }
+                return result, used_language, 'decodo'
+                
+        except Exception as e:
+            logger.warning(f"Decodo extraction failed for {video_id}: {e}")
+    
+    # Method 2: Try YouTube Transcript API (fallback)
+    if TRANSCRIPT_CONFIG['YOUTUBE_API']['enabled'] and TRANSCRIPT_CONFIG['FALLBACK_STRATEGY']['enable_fallback']:
+        try:
+            logger.info(f"Attempting YouTube API fallback extraction for {video_id}")
+            
+            preferred_languages = TRANSCRIPT_CONFIG['YOUTUBE_API']['preferred_languages']
+            # Ensure the requested language is first in the list
+            if language and language not in preferred_languages:
+                preferred_languages = [language] + preferred_languages
+            
+            success, result = extract_youtube_transcript_fallback(video_id, preferred_languages)
+            
+            if success and result.get('segments'):
+                logger.info(f"✅ YouTube API fallback successful for {video_id}")
+                return result, result.get('language', language), 'youtube_api'
+                
+        except Exception as e:
+            logger.warning(f"YouTube API fallback failed for {video_id}: {e}")
+    
+    # Both methods failed
+    logger.error(f"All transcript extraction methods failed for {video_id}")
+    raise Exception(f"No transcript available for video {video_id} through any extraction method")
+
 @shared_task(bind=True, max_retries=3, default_retry_delay=60)
 @idempotent_task
 def extract_video_transcript(self, metadata_result, url_request_id):
@@ -137,25 +199,41 @@ def extract_video_transcript(self, metadata_result, url_request_id):
         
         # Extract transcript with timeout protection
         with timeout(YOUTUBE_CONFIG['TASK_TIMEOUTS']['transcript_timeout'], "Transcript extraction"):
-            # Get the video's detected language or use default
-            detected_language = getattr(video_metadata, 'language', 'en') or 'en'
+            # Get the video's detected language or use fallback
+            detected_language = getattr(video_metadata, 'language', 'fallback-en') or 'fallback-en'
+            
+            # Convert to API-compatible language (fallback-en -> en)
+            api_language = get_api_language(detected_language)
             
             # Extract base language code (e.g., 'en' from 'en-US')
-            if '-' in detected_language:
-                base_language = detected_language.split('-')[0]
+            if '-' in api_language:
+                base_language = api_language.split('-')[0]
             else:
-                base_language = detected_language
+                base_language = api_language
                 
-            logger.info(f"Video language: {detected_language}, using base language: {base_language}")
-            transcript_data, used_language = extract_transcript_with_decodo(video_id, base_language)
+            logger.info(f"Video language: {detected_language}, API language: {api_language}, using base language: {base_language}")
             
-            logger.info(f"Extracted transcript with {len(transcript_data)} segments using language: {used_language}")
+            # Use fallback extraction strategy
+            transcript_result, used_language, extraction_source = extract_transcript_with_fallback(video_id, base_language)
+            
+            logger.info(f"Transcript extracted using {extraction_source} for {video_id}")
+            logger.info(f"Extracted transcript with {len(transcript_result.get('segments', []))} segments using language: {used_language}")
         
         progress_recorder.set_progress(60, 100, description="Validating transcript data")
         
-        # Validate transcript data
-        validated_transcript = validate_transcript_data(transcript_data)
-        transcript_text = ' '.join([item['text'] for item in validated_transcript])
+        # Get transcript data and text from the result
+        transcript_data = transcript_result.get('segments', [])
+        transcript_text = transcript_result.get('transcript_text', '')
+        
+        # Validate transcript data if we have segments
+        if transcript_data:
+            validated_transcript = validate_transcript_data(transcript_data)
+            # Only override transcript_text if validation produces different result
+            if validated_transcript:
+                validated_text = ' '.join([item['text'] for item in validated_transcript])
+                if validated_text:
+                    transcript_text = validated_text
+                    transcript_data = validated_transcript
         
         progress_recorder.set_progress(70, 100, description="Saving transcript to database")
         
@@ -163,21 +241,34 @@ def extract_video_transcript(self, metadata_result, url_request_id):
         with transaction.atomic():
             transcript_obj.transcript_text = transcript_text
             transcript_obj.status = 'success'
+            transcript_obj.transcript_source = extraction_source  # Track source
             transcript_obj.save()
+            
+            # Language detection for fallback languages only
+            if should_update_language(detected_language):
+                logger.info(f"Performing language detection for fallback language: {detected_language}")
+                is_english, confidence = detect_transcript_language(transcript_text)
+                if is_english:
+                    updated_language = 'en'
+                    video_metadata.language = updated_language
+                    video_metadata.save()
+                    logger.info(f"Language updated: {detected_language} → {updated_language} (confidence: {confidence:.3f})")
+                else:
+                    logger.info(f"Language kept as {detected_language} (English confidence: {confidence:.3f} < 0.7)")
             
             # Clear existing segments (in case of retry)
             TranscriptSegment.objects.filter(transcript=transcript_obj).delete()
             
             # Create transcript segments
             segments_created = []
-            for i, segment_data in enumerate(validated_transcript):
+            for i, segment_data in enumerate(transcript_data):
                 segment_id = f"{video_id}_{i+1:03d}"  # e.g., "dQw4w9WgXcQ_001"
                 
                 # Calculate duration from segment data or next segment
                 if 'duration' in segment_data:
                     duration = segment_data['duration']
-                elif i+1 < len(validated_transcript):
-                    duration = validated_transcript[i+1]['start'] - segment_data['start']
+                elif i+1 < len(transcript_data):
+                    duration = transcript_data[i+1]['start'] - segment_data['start']
                 else:
                     duration = 5.0  # Default 5 seconds for last segment
                 
@@ -218,7 +309,8 @@ def extract_video_transcript(self, metadata_result, url_request_id):
                     defaults={
                         'video_metadata': video_metadata,
                         'transcript_text': '',
-                        'status': 'failed'
+                        'status': 'failed',
+                        'transcript_source': 'none'
                     }
                 )
             except Exception as db_error:

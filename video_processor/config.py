@@ -54,6 +54,41 @@ DECODO_CONFIG = {
     }
 }
 
+# Language Detection Configuration
+LANGUAGE_DETECTION_CONFIG = {
+    'confidence_threshold': 0.7,  # 70% confidence for English detection
+    'fallback_language_code': 'fallback-en',
+    'default_api_language': 'en',
+    'sample_extraction': {
+        'beginning_chars': 30,    # Small sample from beginning
+        'middle_chars': 25,       # Small sample from middle  
+        'end_chars': 30           # Small sample from end
+    },
+    'use_low_memory': True,       # Use low memory mode for lightweight operation
+}
+
+# Transcript Extraction Configuration
+TRANSCRIPT_CONFIG = {
+    'DECODO': {
+        'enabled': True,
+        'timeout': 30,
+        'max_retries': 2,
+        'priority': 1,  # Try first
+    },
+    'YOUTUBE_API': {
+        'enabled': True,
+        'timeout': 20,
+        'max_retries': 1,
+        'priority': 2,  # Fallback
+        'preferred_languages': ['en', 'es', 'fr', 'de'],
+    },
+    'FALLBACK_STRATEGY': {
+        'enable_fallback': True,
+        'fail_fast': False,  # Try all methods before failing
+        'log_attempts': True,
+    }
+}
+
 # Task State Tracking
 TASK_STATES = {
     'EXTRACTING_METADATA': 'extracting_metadata',

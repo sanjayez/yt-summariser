@@ -573,8 +573,8 @@ class IntegratedSearchProcessAPIView(APIView):
             # Validate max_videos
             try:
                 max_videos = int(max_videos)
-                if max_videos < 1 or max_videos > 10:
-                    max_videos = 5
+                if max_videos < 1 or max_videos > 20:
+                    max_videos = 20
             except (ValueError, TypeError):
                 max_videos = 5
             

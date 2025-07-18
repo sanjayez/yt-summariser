@@ -120,7 +120,7 @@ def extract_video_metadata(self, url_request_id):
                 channel_name=(metadata['channel_name'] or 'Unknown Channel')[:100],  # Safe slicing with fallback
                 view_count=metadata['view_count'],
                 upload_date=metadata['upload_date'],
-                language=(metadata['language'] or 'unknown')[:10],  # Safe slicing with fallback for undetected language
+                language=(metadata['language'] or 'fallback-en'),  # Fallback for undetected language (fallback-en is exactly 10 chars)
                 like_count=metadata['like_count'],
                 channel_id=(metadata['channel_id'] or '')[:100],  # Safe slicing with fallback
                 tags=metadata['tags'] or [],

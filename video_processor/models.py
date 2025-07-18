@@ -135,6 +135,20 @@ class VideoTranscript(models.Model):
     summary = models.TextField(blank=True, null=True, help_text="AI-generated summary of the video content")
     key_points = models.JSONField(default=list, blank=True, help_text="List of key points extracted from the video")
     
+    # Transcript source tracking
+    TRANSCRIPT_SOURCES = [
+        ('decodo', 'Decodo API'),
+        ('youtube_api', 'YouTube Transcript API'),
+        ('manual', 'Manual Upload'),
+    ]
+    
+    transcript_source = models.CharField(
+        max_length=20, 
+        choices=TRANSCRIPT_SOURCES, 
+        default='decodo',
+        help_text="Source used for transcript extraction"
+    )
+    
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='processing')
     created_at = models.DateTimeField(auto_now_add=True)
     
