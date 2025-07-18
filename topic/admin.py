@@ -21,15 +21,15 @@ class SearchSessionAdmin(admin.ModelAdmin):
 
 @admin.register(SearchRequest)
 class SearchRequestAdmin(admin.ModelAdmin):
-    list_display = ['request_id_short', 'session_short', 'original_query_preview', 'processed_query_preview', 'total_videos', 'status', 'created_at']
+    list_display = ['search_id_short', 'session_short', 'original_query_preview', 'processed_query_preview', 'total_videos', 'status', 'created_at']
     list_filter = ['status', 'created_at', 'search_session__user_ip', 'total_videos']
-    search_fields = ['request_id', 'original_query', 'processed_query', 'search_session__session_id']
-    readonly_fields = ['request_id', 'created_at']
+    search_fields = ['search_id', 'original_query', 'processed_query', 'search_session__session_id']
+    readonly_fields = ['search_id', 'created_at']
     ordering = ['-created_at']
     
     fieldsets = (
         ('Basic Info', {
-            'fields': ('request_id', 'search_session', 'status', 'created_at')
+            'fields': ('search_id', 'search_session', 'status', 'created_at')
         }),
         ('Search Queries', {
             'fields': ('original_query', 'processed_query')
@@ -43,9 +43,9 @@ class SearchRequestAdmin(admin.ModelAdmin):
         }),
     )
     
-    def request_id_short(self, obj):
-        return str(obj.request_id)[:8]
-    request_id_short.short_description = 'Request ID'
+    def search_id_short(self, obj):
+        return str(obj.search_id)[:8]
+    search_id_short.short_description = 'Search ID'
     
     def session_short(self, obj):
         return str(obj.search_session.session_id)[:8] if obj.search_session else 'N/A'

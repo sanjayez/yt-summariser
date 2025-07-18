@@ -114,21 +114,21 @@ def extract_video_metadata(self, url_request_id):
         with transaction.atomic():
             video_metadata = VideoMetadata.objects.create(
                 video_id=metadata['id'],  # Convert id to video_id for database
-                title=metadata['title'][:255],  # Ensure title fits in field
-                description=metadata['description'],
+                title=(metadata['title'] or 'Untitled')[:255],  # Safe slicing with fallback
+                description=metadata['description'] or '',
                 duration=metadata['duration'],
-                channel_name=metadata['channel_name'][:100],  # Ensure channel name fits
+                channel_name=(metadata['channel_name'] or 'Unknown Channel')[:100],  # Safe slicing with fallback
                 view_count=metadata['view_count'],
                 upload_date=metadata['upload_date'],
-                language=metadata['language'][:10],  # Ensure language fits
+                language=(metadata['language'] or 'unknown')[:10],  # Safe slicing with fallback for undetected language
                 like_count=metadata['like_count'],
-                channel_id=metadata['channel_id'][:100],  # Ensure channel ID fits
-                tags=metadata['tags'],
-                categories=metadata['categories'],
-                thumbnail=metadata['thumbnail'],
+                channel_id=(metadata['channel_id'] or '')[:100],  # Safe slicing with fallback
+                tags=metadata['tags'] or [],
+                categories=metadata['categories'] or [],
+                thumbnail=metadata['thumbnail'] or '',
                 channel_follower_count=metadata['channel_follower_count'],
-                channel_is_verified=metadata['channel_is_verified'],
-                uploader_id=metadata['uploader_id'][:100],  # Ensure uploader ID fits
+                channel_is_verified=metadata['channel_is_verified'] or False,
+                uploader_id=(metadata['uploader_id'] or '')[:100],  # Safe slicing with fallback
                 url_request=url_request,
                 status=TASK_STATES['COMPLETED']
             )

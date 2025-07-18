@@ -103,7 +103,7 @@ def process_search_video(self, url_request_id: int):
                 'status': 'processing',
                 'url_request_id': url_request_id,
                 'task_id': result.id,
-                'search_request_id': str(url_request.search_request.request_id),
+                'search_id': str(url_request.search_request.search_id),
                 'video_url': url_request.url
             }
             
@@ -189,28 +189,28 @@ def update_search_video_status(self, url_request_id: int, status: str, message: 
 
 
 @shared_task(bind=True, name='video_processor.get_search_video_results')
-def get_search_video_results(self, search_request_id: str):
+def get_search_video_results(self, search_id: str):
     """
     Get the results of video processing for a search request.
     
     Args:
-        search_request_id: UUID of the SearchRequest
+        search_id: UUID of the SearchRequest
         
     Returns:
         dict: Video processing results and metadata
     """
-    logger.info(f"Getting search video results for search request: {search_request_id}")
+    logger.info(f"Getting search video results for search request: {search_id}")
     
     try:
         # Get search request
         try:
-            search_request = SearchRequestModel.objects.get(request_id=search_request_id)
+            search_request = SearchRequestModel.objects.get(search_id=search_id)
             
         except SearchRequestModel.DoesNotExist:
             return {
                 'status': 'failed',
                 'error': 'Search request not found',
-                'search_request_id': search_request_id
+                'search_id': search_id
             }
         
         # Get all related URLRequestTable entries with video data
@@ -268,7 +268,7 @@ def get_search_video_results(self, search_request_id: str):
         
         return {
             'status': 'success',
-            'search_request_id': search_request_id,
+            'search_id': search_id,
             'video_results': video_results,
             'summary': {
                 'total_videos': total_videos,
@@ -285,7 +285,7 @@ def get_search_video_results(self, search_request_id: str):
             'status': 'failed',
             'error': 'Failed to get video results',
             'details': str(e),
-            'search_request_id': search_request_id
+            'search_id': search_id
         }
 
 

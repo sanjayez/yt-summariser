@@ -74,14 +74,15 @@ class Command(BaseCommand):
             self.stdout.write(f'Response data: {json.dumps(response.data, indent=2)}')
             
             if response.status_code == 202:  # HTTP_202_ACCEPTED
-                search_request_id = response.data.get('search_request_id')
+                # Update the response data access
+                search_id = response.data.get('search_id')
                 self.stdout.write(
-                    self.style.SUCCESS(f'Successfully started processing. Search ID: {search_request_id}')
+                    self.style.SUCCESS(f'Successfully started processing. Search ID: {search_id}')
                 )
                 
-                if wait_for_completion and search_request_id:
+                if wait_for_completion and search_id:
                     self.stdout.write('Waiting for processing to complete...')
-                    self.wait_for_completion(search_request_id)
+                    self.wait_for_completion(search_id)
             else:
                 self.stdout.write(
                     self.style.ERROR(f'API call failed with status {response.status_code}')
@@ -94,7 +95,7 @@ class Command(BaseCommand):
             import traceback
             traceback.print_exc()
 
-    def wait_for_completion(self, search_request_id, max_wait_time=600):
+    def wait_for_completion(self, search_id, max_wait_time=600):
         """Wait for the search processing to complete"""
         factory = RequestFactory()
         status_view = SearchStatusAPIView()
@@ -103,12 +104,12 @@ class Command(BaseCommand):
         while time.time() - start_time < max_wait_time:
             try:
                 # Create status check request
-                request = factory.get(f'/api/topic/search/status/{search_request_id}/')
+                request = factory.get(f'/api/topic/search/status/{search_id}/')
                 request.user = AnonymousUser()
                 request.META['REMOTE_ADDR'] = '127.0.0.1'
                 
                 # Get status
-                response = status_view.get(request, search_request_id)
+                response = status_view.get(request, search_id)
                 
                 if response.status_code == 200:
                     data = response.data

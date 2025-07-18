@@ -19,64 +19,64 @@ logger = logging.getLogger(__name__)
 
 
 @shared_task(bind=True, name='topic.process_search_results')
-def process_search_results(self, search_request_id: str):
+def process_search_results(self, search_id: str):
     """
     Parallel processing orchestrator for search results.
     
-    Takes a search_request_id and processes all found videos in parallel.
+    Takes a search_id and processes all found videos in parallel.
     
     Args:
-        search_request_id: UUID of the SearchRequest to process videos for
+        search_id: UUID of the SearchRequest to process videos for
         
     Returns:
         dict: Processing result with status and details
     """
-    logger.info(f"Starting parallel video processing for search request: {search_request_id}")
+    logger.info(f"Starting parallel video processing for search request: {search_id}")
     
     try:
         # Get search request from database
         try:
             search_request = SearchRequestModel.objects.select_related('search_session').get(
-                request_id=search_request_id
+                search_id=search_id
             )
             session = search_request.search_session
             
             # Validate search request has completed successfully
             if search_request.status != 'success':
-                error_msg = f"Search request {search_request_id} is not in success status (current: {search_request.status})"
+                error_msg = f"Search request {search_id} is not in success status (current: {search_request.status})"
                 logger.error(error_msg)
                 return {
                     'status': 'failed',
                     'error': 'Search request not completed successfully',
-                    'search_request_id': search_request_id
+                    'search_id': search_id
                 }
             
             video_urls = search_request.video_urls
             if not video_urls:
-                error_msg = f"No video URLs found for search request {search_request_id}"
+                error_msg = f"No video URLs found for search request {search_id}"
                 logger.warning(error_msg)
                 return {
                     'status': 'success',
-                    'search_request_id': search_request_id,
+                    'search_id': search_id,
                     'message': 'No videos to process',
                     'processed_videos': 0
                 }
             
-            logger.info(f"Processing {len(video_urls)} videos for search request {search_request_id}")
+            logger.info(f"Processing {len(video_urls)} videos for search request {search_id}")
             
         except SearchRequestModel.DoesNotExist:
-            error_msg = f"Search request {search_request_id} not found"
+            error_msg = f"Search request {search_id} not found"
             logger.error(error_msg)
             return {
                 'status': 'failed',
                 'error': 'Search request not found',
-                'search_request_id': search_request_id
+                'search_id': search_id
             }
         
         # Create URLRequestTable entries for each video
         try:
             url_request_ids = _create_url_request_entries(search_request, video_urls)
-            logger.info(f"Created {len(url_request_ids)} URLRequestTable entries for search request {search_request_id}")
+            logger.info(f"Created {len(url_request_ids)} URLRequestTable entries for search request {search_id}")
             
         except Exception as e:
             error_msg = f"Failed to create URLRequestTable entries: {str(e)}"
@@ -86,14 +86,14 @@ def process_search_results(self, search_request_id: str):
                 'status': 'failed',
                 'error': 'Failed to create URL request entries',
                 'details': str(e),
-                'search_request_id': search_request_id
+                'search_id': search_id
             }
         
         # Update search request status to indicate video processing started
         try:
             _update_search_request_processing_status(search_request, 'processing_videos', 
                                                    f"Started processing {len(url_request_ids)} videos")
-            logger.info(f"Updated search request {search_request_id} to processing_videos status")
+            logger.info(f"Updated search request {search_id} to processing_videos status")
             
         except Exception as e:
             logger.error(f"Failed to update search request status: {e}")
@@ -108,14 +108,14 @@ def process_search_results(self, search_request_id: str):
             
             # Use chord to wait for all tasks to complete, then run completion callback
             processing_chord = chord(video_processing_group)(
-                finalize_search_processing.s(search_request_id, url_request_ids)
+                finalize_search_processing.s(search_id, url_request_ids)
             )
             
-            logger.info(f"Launched parallel processing for {len(url_request_ids)} videos in search request {search_request_id}")
+            logger.info(f"Launched parallel processing for {len(url_request_ids)} videos in search request {search_id}")
             
             return {
                 'status': 'processing',
-                'search_request_id': search_request_id,
+                'search_id': search_id,
                 'url_request_ids': url_request_ids,
                 'total_videos': len(url_request_ids),
                 'chord_id': processing_chord.id
@@ -129,7 +129,7 @@ def process_search_results(self, search_request_id: str):
                 'status': 'failed',
                 'error': 'Failed to launch parallel processing',
                 'details': str(e),
-                'search_request_id': search_request_id
+                'search_id': search_id
             }
         
     except Exception as e:
@@ -138,12 +138,12 @@ def process_search_results(self, search_request_id: str):
             'status': 'failed',
             'error': 'Unexpected error',
             'details': str(e),
-            'search_request_id': search_request_id
+            'search_id': search_id
         }
 
 
 @shared_task(bind=True, name='topic.finalize_search_processing')
-def finalize_search_processing(self, processing_results: List[Any], search_request_id: str, url_request_ids: List[int]):
+def finalize_search_processing(self, processing_results: List[Any], search_id: str, url_request_ids: List[int]):
     """
     Completion monitoring system for parallel processing.
     
@@ -152,29 +152,29 @@ def finalize_search_processing(self, processing_results: List[Any], search_reque
     
     Args:
         processing_results: Results from parallel video processing tasks
-        search_request_id: UUID of the SearchRequest
+        search_id: UUID of the SearchRequest
         url_request_ids: List of URLRequestTable IDs that were processed
         
     Returns:
         dict: Final processing result
     """
-    logger.info(f"Finalizing processing for search request {search_request_id} with {len(url_request_ids)} videos")
+    logger.info(f"Finalizing processing for search request {search_id} with {len(url_request_ids)} videos")
     
     try:
         # Get search request from database
         try:
             search_request = SearchRequestModel.objects.select_related('search_session').get(
-                request_id=search_request_id
+                search_id=search_id
             )
             session = search_request.search_session
             
         except SearchRequestModel.DoesNotExist:
-            error_msg = f"Search request {search_request_id} not found during finalization"
+            error_msg = f"Search request {search_id} not found during finalization"
             logger.error(error_msg)
             return {
                 'status': 'failed',
                 'error': 'Search request not found',
-                'search_request_id': search_request_id
+                'search_id': search_id
             }
         
         # Analyze processing results
@@ -195,14 +195,14 @@ def finalize_search_processing(self, processing_results: List[Any], search_reque
                     update_session_status(session, 'failed')
                 # Keep session as processing if search request is partially_completed
                 
-                logger.info(f"Search request {search_request_id} finalized with status: {final_status}")
+                logger.info(f"Search request {search_id} finalized with status: {final_status}")
                 
         except Exception as e:
-            logger.error(f"Failed to update final status for search request {search_request_id}: {e}")
+            logger.error(f"Failed to update final status for search request {search_id}: {e}")
         
         return {
             'status': 'completed',
-            'search_request_id': search_request_id,
+            'search_id': search_id,
             'final_status': final_status,
             'processing_stats': processing_stats,
             'status_message': status_message
@@ -214,7 +214,7 @@ def finalize_search_processing(self, processing_results: List[Any], search_reque
             'status': 'failed',
             'error': 'Unexpected error during finalization',
             'details': str(e),
-            'search_request_id': search_request_id
+            'search_id': search_id
         }
 
 
@@ -364,19 +364,19 @@ def _update_search_request_processing_status(search_request: SearchRequestModel,
 
 
 @shared_task(bind=True, name='topic.get_search_processing_status')
-def get_search_processing_status(self, search_request_id: str):
+def get_search_processing_status(self, search_id: str):
     """
     Get the current status of search result processing.
     
     Args:
-        search_request_id: UUID of the SearchRequest
+        search_id: UUID of the SearchRequest
         
     Returns:
         dict: Current processing status and statistics
     """
     try:
         search_request = SearchRequestModel.objects.select_related('search_session').get(
-            request_id=search_request_id
+            search_id=search_id
         )
         
         # Get all related URLRequestTable entries
@@ -385,7 +385,7 @@ def get_search_processing_status(self, search_request_id: str):
         if not url_requests.exists():
             return {
                 'status': 'no_processing',
-                'search_request_id': search_request_id,
+                'search_id': search_id,
                 'message': 'No video processing initiated'
             }
         
@@ -395,7 +395,7 @@ def get_search_processing_status(self, search_request_id: str):
         
         return {
             'status': 'success',
-            'search_request_id': search_request_id,
+            'search_id': search_id,
             'processing_stats': processing_stats,
             'search_request_status': search_request.status,
             'status_message': search_request.error_message or 'Processing in progress'
@@ -405,7 +405,7 @@ def get_search_processing_status(self, search_request_id: str):
         return {
             'status': 'failed',
             'error': 'Search request not found',
-            'search_request_id': search_request_id
+            'search_id': search_id
         }
     except Exception as e:
         logger.error(f"Error getting search processing status: {e}")
@@ -413,5 +413,5 @@ def get_search_processing_status(self, search_request_id: str):
             'status': 'failed',
             'error': 'Unexpected error',
             'details': str(e),
-            'search_request_id': search_request_id
+            'search_id': search_id
         }

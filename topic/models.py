@@ -33,7 +33,7 @@ class SearchRequest(models.Model):
         ('success', 'Success'),
     ]
     
-    request_id = models.UUIDField(default=uuid.uuid4, editable=False, unique=True)
+    search_id = models.UUIDField(default=uuid.uuid4, editable=False, unique=True)
     search_session = models.ForeignKey(SearchSession, on_delete=models.CASCADE, related_name='search_requests')
     original_query = models.TextField(help_text="User's original query")
     processed_query = models.TextField(blank=True, help_text="LLM-enhanced query for YouTube search")
@@ -44,12 +44,12 @@ class SearchRequest(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
     
     def __str__(self):
-        return f"Request {str(self.request_id)[:8]} - {self.original_query[:50]}"
+        return f"Search {str(self.search_id)[:8]} - {self.original_query[:50]}"
     
     class Meta:
         ordering = ['-created_at']
         indexes = [
-            models.Index(fields=['request_id']),
+            models.Index(fields=['search_id']),
             models.Index(fields=['search_session', 'created_at']),
             models.Index(fields=['status']),
         ]

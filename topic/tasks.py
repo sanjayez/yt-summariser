@@ -21,7 +21,7 @@ logger = logging.getLogger(__name__)
 
 
 @shared_task(bind=True, name='topic.process_search_query')
-def process_search_query(self, search_request_id: str, max_videos: int = 5):
+def process_search_query(self, search_id: str, max_videos: int = 5):
     """
     Process a search query asynchronously
     
@@ -32,31 +32,31 @@ def process_search_query(self, search_request_id: str, max_videos: int = 5):
     4. Database updates with results
     
     Args:
-        search_request_id: UUID of the SearchRequest to process
+        search_id: UUID of the SearchRequest to process
         
     Returns:
         dict: Processing result with status and details
     """
-    logger.info(f"Starting async processing for search request: {search_request_id}")
+    logger.info(f"Starting async processing for search request: {search_id}")
     
     try:
         # Get search request from database
         try:
             search_request = SearchRequestModel.objects.select_related('search_session').get(
-                request_id=search_request_id
+                search_id=search_id
             )
             session = search_request.search_session
             original_query = search_request.original_query
             
-            logger.debug(f"Processing search request: {search_request_id} for query: '{original_query}'")
+            logger.debug(f"Processing search request: {search_id} for query: '{original_query}'")
             
         except SearchRequestModel.DoesNotExist:
-            error_msg = f"Search request {search_request_id} not found"
+            error_msg = f"Search request {search_id} not found"
             logger.error(error_msg)
             return {
                 'status': 'failed',
                 'error': 'Search request not found',
-                'search_request_id': search_request_id
+                'search_id': search_id
             }
         
         # Initialize AI services
@@ -95,7 +95,7 @@ def process_search_query(self, search_request_id: str, max_videos: int = 5):
                 'status': 'failed',
                 'error': 'AI services initialization failed',
                 'details': str(e),
-                'search_request_id': search_request_id
+                'search_id': search_id
             }
         
         # Process query using LLM
@@ -108,7 +108,7 @@ def process_search_query(self, search_request_id: str, max_videos: int = 5):
             asyncio.set_event_loop(loop)
             try:
                 enhancement_result = loop.run_until_complete(
-                    query_processor.enhance_query(original_query, job_id=f"search_{search_request_id}")
+                    query_processor.enhance_query(original_query, job_id=f"search_{search_id}")
                 )
             finally:
                 loop.close()
@@ -153,7 +153,7 @@ def process_search_query(self, search_request_id: str, max_videos: int = 5):
                 'status': 'failed',
                 'error': 'YouTube search failed',
                 'details': str(e),
-                'search_request_id': search_request_id
+                'search_id': search_id
             }
         
         # Update database with results
@@ -168,7 +168,7 @@ def process_search_query(self, search_request_id: str, max_videos: int = 5):
                 # Update session status to success
                 update_session_status(session, 'success')
                 
-                logger.info(f"Search request {search_request_id} completed successfully with {len(video_urls)} videos")
+                logger.info(f"Search request {search_id} completed successfully with {len(video_urls)} videos")
                 
         except Exception as e:
             error_msg = f"Failed to update search results: {str(e)}"
@@ -181,13 +181,13 @@ def process_search_query(self, search_request_id: str, max_videos: int = 5):
                 'status': 'failed',
                 'error': 'Database update failed',
                 'details': str(e),
-                'search_request_id': search_request_id
+                'search_id': search_id
             }
         
         # Return success result
         return {
             'status': 'success',
-            'search_request_id': search_request_id,
+            'search_id': search_id,
             'session_id': str(session.session_id),
             'original_query': original_query,
             'processed_query': processed_query,
@@ -210,7 +210,7 @@ def process_search_query(self, search_request_id: str, max_videos: int = 5):
             'status': 'failed',
             'error': 'Unexpected error',
             'details': str(e),
-            'search_request_id': search_request_id
+            'search_id': search_id
         }
 
 
@@ -233,7 +233,7 @@ def _update_session_error(session: SearchSession):
 
 
 @shared_task(bind=True, name='topic.process_search_with_videos')
-def process_search_with_videos(self, search_request_id: str, max_videos: int = 5, start_video_processing: bool = False):
+def process_search_with_videos(self, search_id: str, max_videos: int = 5, start_video_processing: bool = False):
     """
     Integrated search and video processing task.
     
@@ -241,20 +241,20 @@ def process_search_with_videos(self, search_request_id: str, max_videos: int = 5
     for the found videos.
     
     Args:
-        search_request_id: UUID of the SearchRequest to process
+        search_id: UUID of the SearchRequest to process
         start_video_processing: Whether to start video processing after search
         
     Returns:
         dict: Processing result with status and details
     """
-    logger.info(f"Starting integrated search and video processing for request: {search_request_id}")
+    logger.info(f"Starting integrated search and video processing for request: {search_id}")
     
     try:
         # First, perform the search - call directly, not async
-        search_result = process_search_query(search_request_id, max_videos)
+        search_result = process_search_query(search_id, max_videos)
         
         if search_result['status'] != 'success':
-            logger.error(f"Search failed for request {search_request_id}: {search_result}")
+            logger.error(f"Search failed for request {search_id}: {search_result}")
             return search_result
         
         # If video processing is requested and we have videos
@@ -265,12 +265,12 @@ def process_search_with_videos(self, search_request_id: str, max_videos: int = 5
             from topic.parallel_tasks import process_search_results
             
             # Start parallel video processing
-            video_processing_result = process_search_results.apply_async(args=[search_request_id])
+            video_processing_result = process_search_results.apply_async(args=[search_id])
             
             # Return combined result
             return {
                 'status': 'processing_videos',
-                'search_request_id': search_request_id,
+                'search_id': search_id,
                 'search_result': search_result,
                 'video_processing_task_id': video_processing_result.id,
                 'message': f"Search completed, processing {len(search_result['video_urls'])} videos"
@@ -285,5 +285,5 @@ def process_search_with_videos(self, search_request_id: str, max_videos: int = 5
             'status': 'failed',
             'error': 'Unexpected error',
             'details': str(e),
-            'search_request_id': search_request_id
+            'search_id': search_id
         } 

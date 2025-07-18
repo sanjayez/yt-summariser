@@ -84,15 +84,15 @@ class TopicSearchAPIView(APIView):
                         original_query=query,
                         status='processing'
                     )
-                    logger.debug(f"Created search request {search_request.request_id}")
+                    logger.debug(f"Created search request {search_request.search_id}")
             except Exception as e:
                 logger.error(f"Failed to create search request: {e}")
                 raise APIException("Failed to create search request")
             
             # Dispatch Celery task for async processing
             try:
-                task = process_search_query.delay(str(search_request.request_id))
-                logger.info(f"Dispatched async task {task.id} for search request {search_request.request_id}")
+                task = process_search_query.delay(str(search_request.search_id))
+                logger.info(f"Dispatched async task {task.id} for search request {search_request.search_id}")
             except Exception as e:
                 logger.error(f"Failed to dispatch Celery task: {e}")
                 # Update search request status
@@ -156,10 +156,10 @@ class SearchAndProcessAPIView(APIView):
             "max_videos": "integer (optional) - Maximum number of videos to process (default: 3)"
         }
     
-    Response:
+            Response:
         {
             "session_id": "uuid",
-            "search_request_id": "uuid", 
+            "search_id": "uuid", 
             "original_query": "string",
             "status": "processing",
             "video_requests": [
@@ -207,10 +207,10 @@ class SearchAndProcessAPIView(APIView):
                     status='processing'
                 )
                 
-                logger.info(f"Created search request {search_request.request_id} for query: '{query}'")
+                logger.info(f"Created search request {search_request.search_id} for query: '{query}'")
                 
                 # Trigger search processing
-                search_task = process_search_query.delay(str(search_request.request_id))
+                search_task = process_search_query.delay(str(search_request.search_id))
                 logger.info(f"Dispatched search task {search_task.id}")
                 
                 # Refresh search request to get initial results
@@ -264,7 +264,7 @@ class SearchAndProcessAPIView(APIView):
                 # Prepare response
                 response_data = {
                     'session_id': str(session.session_id),
-                    'search_request_id': str(search_request.request_id),
+                    'search_id': str(search_request.search_id),
                     'original_query': query,
                     'status': 'processing',
                     'video_requests': video_requests,
@@ -315,24 +315,24 @@ class ParallelSearchProcessAPIView(APIView):
                     status='processing'
                 )
                 
-                logger.info(f"Created search request {search_request.request_id}")
+                logger.info(f"Created search request {search_request.search_id}")
                 
                 # Start processing based on mode
                 if process_videos:
                     # Use integrated workflow
                     task = process_search_with_videos.delay(
-                        str(search_request.request_id),
+                        str(search_request.search_id),
                         max_videos
                     )
                     logger.info(f"Started integrated search and video processing task {task.id}")
                 else:
                     # Search only
-                    task = process_search_query.delay(str(search_request.request_id))
+                    task = process_search_query.delay(str(search_request.search_id))
                     logger.info(f"Started search-only task {task.id}")
                 
                 # Prepare response
                 response_data = {
-                    'search_request_id': str(search_request.request_id),
+                    'search_id': str(search_request.search_id),
                     'session_id': str(session.session_id),
                     'query': query,
                     'max_videos': max_videos,
@@ -394,13 +394,13 @@ def simple_sse_test(request):
 
 
 @api_view(['GET'])
-def search_status_stream(request, search_request_id):
+def search_status_stream(request, search_id):
     """
     Server-Sent Events endpoint for real-time search and video processing status.
     """
     def event_stream():
         try:
-            logger.info(f"Starting SSE stream for search request {search_request_id}")
+            logger.info(f"Starting SSE stream for search request {search_id}")
             
             max_polls = 150  # Maximum number of polling attempts (5 minutes at 2s intervals)
             poll_count = 0
@@ -411,7 +411,7 @@ def search_status_stream(request, search_request_id):
                 # Get search request
                 try:
                     search_request = SearchRequestModel.objects.select_related('search_session').get(
-                        request_id=search_request_id
+                        search_id=search_id
                     )
                 except SearchRequestModel.DoesNotExist:
                     yield f"data: {json.dumps({
@@ -494,7 +494,7 @@ def search_status_stream(request, search_request_id):
                 # Send overall progress
                 yield f"data: {json.dumps({
                     'type': 'progress_update',
-                    'search_request_id': str(search_request.request_id),
+                    'search_id': str(search_request.search_id),
                     'overall_progress': round(overall_progress, 2),
                     'completed_videos': completed_count,
                     'total_videos': video_count,
@@ -514,7 +514,7 @@ def search_status_stream(request, search_request_id):
                         
                         yield f"data: {json.dumps({
                             'type': 'processing_completed',
-                            'search_request_id': str(search_request.request_id),
+                            'search_id': str(search_request.search_id),
                             'total_videos': video_count,
                             'completed_videos': completed_count,
                             'successful_videos': successful_videos,
@@ -591,11 +591,11 @@ class IntegratedSearchProcessAPIView(APIView):
                     status='processing'
                 )
                 
-                logger.info(f"Created search request {search_request.request_id}")
+                logger.info(f"Created search request {search_request.search_id}")
                 
             # Start integrated processing workflow after transaction commits
             task = process_search_with_videos.delay(
-                str(search_request.request_id),
+                str(search_request.search_id),
                 max_videos=max_videos,
                 start_video_processing=True
             )
@@ -604,7 +604,7 @@ class IntegratedSearchProcessAPIView(APIView):
             
             # Prepare response
             response_data = {
-                'search_request_id': str(search_request.request_id),
+                'search_id': str(search_request.search_id),
                 'session_id': str(session.session_id),
                 'query': query,
                 'max_videos': max_videos,
@@ -612,7 +612,7 @@ class IntegratedSearchProcessAPIView(APIView):
                 'status': 'processing',
                 'task_id': task.id,
                 'estimated_completion_time': timeout,
-                'status_stream_url': f'/api/topic/search/status/{search_request.request_id}/stream/'
+                'status_stream_url': f'/api/topic/search/status/{search_request.search_id}/stream/'
             }
             
             # Return response directly for now (skip serializer for simplicity)

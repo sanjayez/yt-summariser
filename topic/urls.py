@@ -7,5 +7,5 @@ urlpatterns = [
     
     # SSE endpoints
     path('test/sse/', views.simple_sse_test, name='simple_sse_test'),
-    path('search/status/<uuid:search_request_id>/stream/', views.search_status_stream, name='search_status_stream'),
+    path('search/status/<uuid:search_id>/stream/', views.search_status_stream, name='search_status_stream'),
 ]

@@ -82,7 +82,7 @@ class Command(BaseCommand):
                 status='processing'
             )
             
-            self.stdout.write(f'Created test data - Session: {session.session_id}, Request: {search_request.request_id}')
+            self.stdout.write(f'Created test data - Session: {session.session_id}, Request: {search_request.search_id}')
             return session, search_request
 
     def _test_search_only(self, search_request):
@@ -90,11 +90,11 @@ class Command(BaseCommand):
         self.stdout.write(self.style.WARNING('Testing search-only mode'))
         
         from topic.tasks import process_search_query
-        result = process_search_query.apply_async(args=[str(search_request.request_id)])
+        result = process_search_query.apply_async(args=[str(search_request.search_id)])
         
         return {
             'task_id': result.id,
-            'search_request_id': str(search_request.request_id),
+            'search_id': str(search_request.search_id),
             'mode': 'search-only'
         }
 
@@ -104,18 +104,18 @@ class Command(BaseCommand):
         
         # First complete the search
         from topic.tasks import process_search_query
-        search_result = process_search_query.apply_async(args=[str(search_request.request_id)])
+        search_result = process_search_query.apply_async(args=[str(search_request.search_id)])
         search_result = search_result.get()  # Wait for completion
         
         if search_result['status'] != 'success':
             raise CommandError(f'Search failed: {search_result}')
         
         # Then start parallel processing
-        result = process_search_results.apply_async(args=[str(search_request.request_id)])
+        result = process_search_results.apply_async(args=[str(search_request.search_id)])
         
         return {
             'task_id': result.id,
-            'search_request_id': str(search_request.request_id),
+            'search_id': str(search_request.search_id),
             'mode': 'parallel-processing',
             'search_result': search_result
         }
@@ -125,13 +125,13 @@ class Command(BaseCommand):
         self.stdout.write(self.style.WARNING('Testing integrated workflow'))
         
         result = process_search_with_videos.apply_async(
-            args=[str(search_request.request_id)],
+            args=[str(search_request.search_id)],
             kwargs={'start_video_processing': True}
         )
         
         return {
             'task_id': result.id,
-            'search_request_id': str(search_request.request_id),
+            'search_id': str(search_request.search_id),
             'mode': 'integrated'
         }
 
@@ -144,7 +144,7 @@ class Command(BaseCommand):
         while time.time() - start_time < timeout:
             # Check status
             status_result = get_search_processing_status.apply_async(
-                args=[str(search_request.request_id)]
+                args=[str(search_request.search_id)]
             )
             status = status_result.get()
             
@@ -177,7 +177,7 @@ class Command(BaseCommand):
         # Get video processing results
         from video_processor.processors.search_adapter import get_search_video_results
         video_results = get_search_video_results.apply_async(
-            args=[str(search_request.request_id)]
+            args=[str(search_request.search_id)]
         )
         video_results = video_results.get()
         
