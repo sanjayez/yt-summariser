@@ -127,12 +127,14 @@ def process_search_query(self, search_id: str, max_videos: int = 5):
                 query_processor.enhance_query(original_query)
             )
             
-            # Extract enhanced query from result
+            # Extract enhanced query and intent from result
             if enhancement_result.get("status") == "completed":
                 processed_query = enhancement_result.get("enhanced_query", original_query)
-                logger.info(f"Enhanced query: '{original_query}' → '{processed_query}'")
+                intent_type = enhancement_result.get("intent_type", "")
+                logger.info(f"Enhanced query: '{original_query}' → '{processed_query}' (Intent: {intent_type})")
             else:
                 processed_query = original_query
+                intent_type = ""
                 logger.warning(f"Query enhancement failed: {enhancement_result.get('error', 'Unknown error')}, using original query")
             
         except Exception as e:
@@ -141,6 +143,7 @@ def process_search_query(self, search_id: str, max_videos: int = 5):
             
             # Use original query if enhancement fails
             processed_query = original_query
+            intent_type = ""
             logger.info("Using original query due to enhancement failure")
         
         # Perform YouTube search
@@ -178,6 +181,7 @@ def process_search_query(self, search_id: str, max_videos: int = 5):
         try:
             with transaction.atomic():
                 search_request.processed_query = processed_query
+                search_request.intent_type = intent_type
                 search_request.video_urls = video_urls
                 search_request.total_videos = len(video_urls)
                 search_request.status = 'success'

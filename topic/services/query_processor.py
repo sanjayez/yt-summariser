@@ -4,6 +4,7 @@ Enhances user queries by converting natural language to effective YouTube search
 """
 
 import logging
+import json
 from typing import Dict, Any, Optional
 from uuid import uuid4
 
@@ -29,34 +30,57 @@ class QueryProcessor:
         self.system_prompt = self._build_system_prompt()
     
     def _build_system_prompt(self) -> str:
-        """Build the system prompt for query enhancement"""
+        """Build the system prompt for combined intent classification and query enhancement"""
         from datetime import datetime
         current_year = datetime.now().year
         
-        return f"""You are a YouTube search query optimizer. Your task is to convert natural language queries into effective YouTube search terms that work well with YouTube's algorithm.
+        return f"""You are a YouTube search optimizer with intent classification capabilities. For each query, classify the intent and optimize the search terms.
 
-Guidelines:
-- Convert conversational queries to specific, searchable keywords
-- Include relevant technical terms and synonyms  
-- Focus on actionable and specific terms
-- Remove unnecessary words like "how to", "explain", "what is"
-- Keep essential context and domain-specific terms
+INTENT CATEGORIES (choose ONE):
+
+🔍 LOOKUP - Quick facts, definitions, basic information
+   • Markers: "what is", "who is", "define", "meaning", "specs", "age"
+   • Examples: "What is machine learning?", "iPhone 15 specs", "Who is Elon Musk?"
+
+📚 TUTORIAL - Step-by-step learning processes  
+   • Markers: "learn", "tutorial", "course", "lessons", "for beginners"
+   • Examples: "Learn Python programming", "Guitar lessons for beginners"
+
+🛠️ HOW_TO - Solving specific problems/tasks
+   • Markers: "how to", "fix", "solve", "repair", "build", "make"
+   • Examples: "How to fix iPhone screen", "How to bake bread"
+
+⭐ REVIEW - Opinions, evaluations, comparisons, recommendations
+   • Markers: "review", "vs", "comparison", "best", "top", "better"
+   • Examples: "iPhone 15 review", "React vs Vue", "Best laptops {current_year}"
+
+CLASSIFICATION RULES:
+- LOOKUP: Simple information seeking (definitions, facts, specs)
+- TUTORIAL: Structured learning (courses, lessons, skill building)
+- HOW_TO: Problem solving (repairs, tasks, specific goals)
+- REVIEW: Evaluations (reviews, comparisons, recommendations)
+
+QUERY OPTIMIZATION:
+- Convert to specific, searchable keywords
+- Remove unnecessary words ("how to", "what is", "explain")  
+- Include relevant technical terms and synonyms
 - Aim for 3-7 keywords maximum (including "english")
-- ALWAYS include "english" as a keyword to ensure English-language content
-- DO NOT use quotes around the entire query
-- For "latest" or "newest" queries, use {current_year} or omit year entirely
-- Prioritize terms that would appear in YouTube video titles
-- Use simple space-separated keywords, not quoted phrases
+- ALWAYS include "english" to ensure English content
+- For "latest" queries, use {current_year} or omit year
+- Prioritize terms that appear in YouTube video titles
 
-Examples:
-- "How do I learn Python programming?" → "Python programming tutorial beginner english"
-- "Can you explain machine learning concepts?" → "machine learning concepts explained english"
-- "What are the best practices for React development?" → "React development best practices english"
-- "I want to understand neural networks" → "neural networks explained tutorial english"
-- "What are the latest phones?" → "latest phones {current_year} review english"
-- "Show me newest smartphone reviews" → "newest smartphone reviews {current_year} english"
+RESPONSE FORMAT (JSON only):
+{{"intent": "INTENT_TYPE", "enhanced_query": "optimized search terms"}}
 
-Return only the enhanced search terms, nothing else."""
+EXAMPLES:
+- "What is machine learning?" → {{"intent": "LOOKUP", "enhanced_query": "machine learning definition explained english"}}
+- "Learn Python programming" → {{"intent": "TUTORIAL", "enhanced_query": "Python programming tutorial course beginner english"}}
+- "How to fix iPhone screen" → {{"intent": "HOW_TO", "enhanced_query": "iPhone screen repair guide english"}}
+- "iPhone 15 vs Samsung Galaxy review" → {{"intent": "REVIEW", "enhanced_query": "iPhone 15 Samsung Galaxy comparison review {current_year} english"}}
+- "Best laptops 2024" → {{"intent": "REVIEW", "enhanced_query": "best laptops {current_year} review comparison english"}}
+- "JavaScript course for beginners" → {{"intent": "TUTORIAL", "enhanced_query": "JavaScript course tutorial beginner english"}}
+
+Return ONLY valid JSON, nothing else."""
 
     async def enhance_query(
         self, 
@@ -91,16 +115,34 @@ Return only the enhanced search terms, nothing else."""
             result = await self.llm_service.chat_completion(chat_request, job_id=job_id)
             
             if result["status"] == "completed":
-                enhanced_query = result["response"].choices[0].message.content.strip()
+                llm_response = result["response"].choices[0].message.content.strip()
                 
-                # Basic validation of the enhanced query
-                if not enhanced_query:
-                    logger.warning(f"Enhanced query is empty for input: {user_query}")
+                # Parse JSON response containing intent and enhanced query
+                try:
+                    parsed_response = json.loads(llm_response)
+                    intent_type = parsed_response.get("intent", "FACTUAL")
+                    enhanced_query = parsed_response.get("enhanced_query", "")
+                    
+                    # Validate extracted data
+                    if not enhanced_query:
+                        logger.warning(f"Enhanced query is empty for input: {user_query}")
+                        enhanced_query = user_query.strip()
+                    
+                    # Validate intent type
+                    valid_intents = ["LOOKUP", "TUTORIAL", "REVIEW", "HOW_TO"]
+                    if intent_type not in valid_intents:
+                        logger.warning(f"Invalid intent '{intent_type}' for query: {user_query}. Defaulting to LOOKUP")
+                        intent_type = "LOOKUP"
+                        
+                except (json.JSONDecodeError, KeyError) as e:
+                    logger.warning(f"Failed to parse JSON response for query '{user_query}': {e}. Using fallback values.")
                     enhanced_query = user_query.strip()
+                    intent_type = "LOOKUP"
                 
                 return {
                     "original_query": user_query.strip(),
                     "enhanced_query": enhanced_query,
+                    "intent_type": intent_type,
                     "job_id": job_id,
                     "status": "completed",
                     "processing_time_ms": result.get("processing_time_ms", 0),
@@ -112,6 +154,7 @@ Return only the enhanced search terms, nothing else."""
                 return {
                     "original_query": user_query.strip(),
                     "enhanced_query": user_query.strip(),  # Fallback to original
+                    "intent_type": "LOOKUP",  # Default intent on failure
                     "job_id": job_id,
                     "status": "failed",
                     "error": result.get("error", "Query enhancement failed")
@@ -122,6 +165,7 @@ Return only the enhanced search terms, nothing else."""
             return {
                 "original_query": user_query.strip() if user_query else "",
                 "enhanced_query": user_query.strip() if user_query else "",
+                "intent_type": "LOOKUP",  # Default intent on exception
                 "job_id": job_id,
                 "status": "failed",
                 "error": str(e)
@@ -146,7 +190,7 @@ Return only the enhanced search terms, nothing else."""
             messages=messages,
             model="gpt-3.5-turbo",  # Fast and cost-effective for this task
             temperature=0.3,  # Lower temperature for more consistent results
-            max_tokens=100,  # Short responses expected
+            max_tokens=150,  # Increased for JSON response with intent and enhanced query
             top_p=0.9,
             frequency_penalty=0.0,
             presence_penalty=0.0
@@ -187,6 +231,7 @@ Return only the enhanced search terms, nothing else."""
                         "index": i,
                         "original_query": query.strip(),
                         "enhanced_query": result.get("enhanced_query", query.strip()),
+                        "intent_type": result.get("intent_type", "LOOKUP"),
                         "status": result.get("status", "failed"),
                         "processing_time_ms": result.get("processing_time_ms", 0),
                         "tokens_used": result.get("tokens_used", 0)
@@ -197,6 +242,7 @@ Return only the enhanced search terms, nothing else."""
                         "index": i,
                         "original_query": query.strip(),
                         "enhanced_query": query.strip(),
+                        "intent_type": "LOOKUP",
                         "status": "failed",
                         "error": str(e)
                     })

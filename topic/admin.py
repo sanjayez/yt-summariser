@@ -21,8 +21,8 @@ class SearchSessionAdmin(admin.ModelAdmin):
 
 @admin.register(SearchRequest)
 class SearchRequestAdmin(admin.ModelAdmin):
-    list_display = ['search_id_short', 'session_short', 'original_query_preview', 'processed_query_preview', 'total_videos', 'status', 'created_at']
-    list_filter = ['status', 'created_at', 'search_session__user_ip', 'total_videos']
+    list_display = ['search_id_short', 'session_short', 'original_query_preview', 'processed_query_preview', 'intent_type', 'total_videos', 'status', 'created_at']
+    list_filter = ['status', 'intent_type', 'created_at', 'search_session__user_ip', 'total_videos']
     search_fields = ['search_id', 'original_query', 'processed_query', 'search_session__session_id']
     readonly_fields = ['search_id', 'created_at']
     ordering = ['-created_at']
@@ -32,7 +32,7 @@ class SearchRequestAdmin(admin.ModelAdmin):
             'fields': ('search_id', 'search_session', 'status', 'created_at')
         }),
         ('Search Queries', {
-            'fields': ('original_query', 'processed_query')
+            'fields': ('original_query', 'processed_query', 'intent_type')
         }),
         ('Results', {
             'fields': ('video_urls', 'total_videos')

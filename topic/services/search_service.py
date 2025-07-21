@@ -16,6 +16,7 @@ class SearchRequest(BaseModel):
     query: str = Field(..., min_length=1, max_length=500, description="Search query string")
     max_results: int = Field(default=5, ge=1, le=50, description="Maximum number of results to return")
     include_metadata: bool = Field(default=False, description="Whether to include metadata in results")
+    intent_type: Optional[str] = Field(default=None, description="Classified intent type (LOOKUP, TUTORIAL, HOW_TO, REVIEW)")
     filters: Optional[Dict[str, Any]] = Field(default=None, description="Optional search filters")
     
     @field_validator('query')
