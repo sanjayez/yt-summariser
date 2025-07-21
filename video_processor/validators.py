@@ -17,18 +17,18 @@ def validate_youtube_url(url):
     return url
 
 def validate_video_info(info):
-    """Validate video information from yt-dlp"""
+    """Validate normalized video metadata (expects video_id field from normalization layer)"""
     if not info:
         raise ValueError("No video information extracted")
     
-    required_fields = ['id', 'title']
+    required_fields = ['video_id', 'title']
     missing_fields = [field for field in required_fields if not info.get(field)]
     
     if missing_fields:
         raise ValueError(f"Missing required fields: {missing_fields}")
     
     # Additional validation
-    if len(info.get('id', '')) != 11:
+    if len(info.get('video_id', '')) != 11:
         raise ValueError("Invalid video ID format")
     
     return info

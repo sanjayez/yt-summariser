@@ -3,9 +3,45 @@
 # YouTube API Configuration
 YOUTUBE_CONFIG = {
     'TASK_TIMEOUTS': {
-        'metadata_timeout': 300,  # 5 minutes
-        'transcript_timeout': 180,  # 3 minutes - Decodo is much faster
-        'status_update_timeout': 30,  # 30 seconds
+        # Metadata extraction timeouts
+        'metadata_soft_limit': 240,      # 4 minutes - gives cleanup time
+        'metadata_hard_limit': 300,      # 5 minutes - absolute maximum
+        'metadata_timeout': 210,         # 3.5 minutes - internal timeout
+        
+        # Transcript extraction timeouts
+        'transcript_soft_limit': 180,    # 3 minutes - transcript extraction can be slow
+        'transcript_hard_limit': 240,    # 4 minutes - absolute maximum
+        'transcript_timeout': 150,       # 2.5 minutes - internal timeout
+        
+        # Summary generation timeouts
+        'summary_soft_limit': 120,       # 2 minutes - LLM calls are usually fast
+        'summary_hard_limit': 180,       # 3 minutes - absolute maximum  
+        'summary_timeout': 90,           # 1.5 minutes - internal timeout
+        
+        # Embedding generation timeouts
+        'embedding_soft_limit': 120,     # 2 minutes - OpenAI API is usually fast
+        'embedding_hard_limit': 180,     # 3 minutes - absolute maximum
+        'embedding_timeout': 90,         # 1.5 minutes - internal timeout
+        
+        # Status update timeouts - these should be very fast
+        'status_soft_limit': 25,         # 25 seconds - database operations
+        'status_hard_limit': 30,         # 30 seconds - absolute maximum
+        'status_timeout': 20,            # 20 seconds - internal timeout
+        
+        # Workflow orchestration timeouts
+        'workflow_soft_limit': 600,      # 10 minutes - manages entire pipeline
+        'workflow_hard_limit': 720,      # 12 minutes - absolute maximum
+        'workflow_timeout': 540,         # 9 minutes - internal timeout
+        
+        # Search processing timeouts
+        'search_soft_limit': 180,        # 3 minutes - YouTube search + LLM processing
+        'search_hard_limit': 240,        # 4 minutes - absolute maximum
+        'search_timeout': 150,           # 2.5 minutes - internal timeout
+        
+        # Parallel processing timeouts
+        'parallel_soft_limit': 1200,     # 20 minutes - processing multiple videos
+        'parallel_hard_limit': 1500,     # 25 minutes - absolute maximum  
+        'parallel_timeout': 1080,        # 18 minutes - internal timeout
     },
     'RETRY_CONFIG': {
         'metadata': {
@@ -35,6 +71,18 @@ YOUTUBE_CONFIG = {
         'status_update': {
             'max_retries': 5,
             'countdown': 5,
+            'backoff': False,
+            'jitter': False,
+        },
+        'search': {
+            'max_retries': 2,
+            'countdown': 60,
+            'backoff': True,
+            'jitter': True,
+        },
+        'parallel': {
+            'max_retries': 1,
+            'countdown': 300,
             'backoff': False,
             'jitter': False,
         }
@@ -89,6 +137,25 @@ TRANSCRIPT_CONFIG = {
     }
 }
 
+# API and SSE Configuration
+API_CONFIG = {
+    'POLLING': {
+        'status_check_interval': 2,      # Seconds between status checks
+        'status_check_max_attempts': 60,  # Max attempts for status polling (60 * 2 = 120 seconds)
+        'search_polling_interval': 2,     # Seconds between search status checks
+        'task_polling_interval': 1,       # Seconds between task status checks
+    },
+    'SSE': {
+        'keepalive_interval': 30,        # Seconds between keepalive messages
+        'event_timeout': 120,            # Max seconds for SSE connection
+    },
+    'RATE_LIMITS': {
+        'default_requests_per_minute': 60,
+        'burst_requests': 100,
+        'ip_based': True,
+    }
+}
+
 # Task State Tracking
 TASK_STATES = {
     'EXTRACTING_METADATA': 'extracting_metadata',
@@ -98,4 +165,68 @@ TASK_STATES = {
     'UPDATING_STATUS': 'updating_status',
     'COMPLETED': 'completed',
     'FAILED_PERMANENTLY': 'failed_permanently'
+}
+
+# Business Logic Configuration
+BUSINESS_LOGIC_CONFIG = {
+    'LANGUAGE_DETECTION': {
+        'confidence_threshold': 0.7,  # 70% for English detection
+    },
+    'PIPELINE_SUCCESS': {
+        'minimum_threshold': 0.85,  # 85% for URLRequest success
+    },
+    'DURATION_LIMITS': {
+        'minimum_seconds': 60,      # 1 minute minimum
+        'maximum_seconds': 900,     # 15 minutes (eventually remove)
+    },
+    'MUSIC_DETECTION': {
+        # Comprehensive list of primary music indicators (Type 1 - KEEP)
+        'primary_music_tags': [
+            'music', 'song', 'artist', 'album', 'band', 'singer', 'musician',
+            'concert', 'performance', 'live', 'acoustic', 'cover', 'remix',
+            'official', 'mv', 'music video', 'single', 'ep', 'soundtrack',
+            'composer', 'orchestra', 'symphony', 'piano', 'guitar', 'violin',
+            'jazz', 'rock', 'pop', 'classical', 'hip hop', 'rap', 'country',
+            'folk', 'blues', 'metal', 'electronic', 'dance', 'house', 'techno'
+        ],
+        
+        # Background music indicators (Type 2 - EXCLUDE)
+        # Single array - ANY of these suggests background music content
+        'background_indicators': [
+            # ASMR related
+            'asmr', 'triggers', 'tingles', 'relaxing', 'sleep', 'calming',
+            
+            # Study/productivity related (specific to background music context)
+            'study music', 'focus music', 'concentration music', 'productivity music', 
+            'coding music', 'programming music', 'reading music', 'homework music', 
+            'exam music', 'meditation',
+            
+            # Ambient/background related
+            'ambient', 'background', 'atmospheric', 'soundscape', 'white noise',
+            'brown noise', 'pink noise', 'binaural', 'beats for', 'music for',
+            
+            # Nature/environmental sounds
+            'rain', 'ocean', 'forest', 'birds', 'nature sounds', 'thunderstorm',
+            'waves', 'wind', 'fire crackling', 'cafe sounds', 'library',
+            
+            # Activity-specific background audio (be more specific to avoid false positives)
+            'yoga', 'massage', 'spa', 'workout', 'gym', 'running', 'walking',
+            'driving', 'cleaning', 'gaming', 'streaming',
+            
+            # Explicit background music indicators
+            'background music', 'bgm', 'instrumental only', 'no vocals',
+            'non copyright', 'royalty free', 'copyright free', 'cc0',
+            
+            # Time/duration specific (often background)
+            'hours', 'hour', '24/7', 'loop', 'repeat', 'extended', 'long',
+            '8 hours', '10 hours', '12 hours', 'all night', 'marathon'
+        ],
+        
+        # YouTube categories that indicate primary music content
+        'primary_music_categories': ['Music', 'Entertainment'],
+        
+        # Weight thresholds for classification
+        'music_weight_threshold': 2,  # Need 2+ primary music indicators
+        'background_weight_threshold': 1,  # Need 1+ background indicator
+    }
 }

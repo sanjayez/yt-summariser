@@ -11,6 +11,7 @@ import json
 import time
 import asyncio
 import logging
+from video_processor.config import API_CONFIG
 
 logger = logging.getLogger(__name__)
 
@@ -270,8 +271,8 @@ Please provide a helpful answer based on the video content. If the information i
             chat_request = ChatRequest(messages=messages)
             
             response_data = await llm_service.chat_completion(chat_request)
-            if response_data and response_data.get('response') and response_data['response'].message:
-                answer = response_data['response'].message.content
+            if response_data and response_data.get('response') and response_data['response'].choices:
+                answer = response_data['response'].choices[0].message.content
             else:
                 answer = "I couldn't generate an answer based on the available content."
             
@@ -490,13 +491,17 @@ def video_status_stream(request, request_id):
     metadata extraction, transcript extraction, summary generation, content embedding
     """
     def event_stream():
-        max_attempts = 60  
+        max_attempts = API_CONFIG['POLLING']['status_check_max_attempts']
+        poll_interval = API_CONFIG['POLLING']['status_check_interval']
         attempts = 0
         
-        # Maximum 2 minutes (60 * 2 seconds)
+        # Maximum time based on config (max_attempts * poll_interval seconds)
         while attempts < max_attempts:
             try:
-                url_request = URLRequestTable.objects.get(request_id=request_id)
+                url_request = URLRequestTable.objects.select_related(
+                    'video_metadata',
+                    'video_metadata__video_transcript'
+                ).get(request_id=request_id)
                 
                 # Build enhanced status data
                 data = {
@@ -554,7 +559,7 @@ def video_status_stream(request, request_id):
                 if url_request.status in ['success', 'failed']:
                     break
                     
-                time.sleep(2)  # Wait 2 seconds
+                time.sleep(poll_interval)  # Wait based on config
                 attempts += 1
                 
             except URLRequestTable.DoesNotExist:

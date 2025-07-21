@@ -2,6 +2,7 @@ from celery import shared_task
 from celery_progress.backend import ProgressRecorder
 from django.db import transaction
 from django.utils import timezone
+from celery.exceptions import SoftTimeLimitExceeded
 import logging
 import time
 
@@ -10,10 +11,11 @@ from ..models import VideoMetadata, VideoTranscript, TranscriptSegment
 from ..config import YOUTUBE_CONFIG, TRANSCRIPT_CONFIG
 from ..validators import validate_transcript_data
 from ..utils import (
-    timeout, idempotent_task, handle_dead_letter_task
+    timeout, idempotent_task, handle_dead_letter_task,
+    update_task_progress
 )
 from ..utils.language_detection import (
-    should_update_language, detect_transcript_language, get_api_language
+    detect_transcript_language, get_api_language
 )
 from ..services.decodo_service import extract_youtube_transcript
 from ..services.youtube_transcript_service import extract_youtube_transcript_fallback
@@ -150,7 +152,14 @@ def extract_transcript_with_fallback(video_id: str, language: str) -> tuple[dict
     logger.error(f"All transcript extraction methods failed for {video_id}")
     raise Exception(f"No transcript available for video {video_id} through any extraction method")
 
-@shared_task(bind=True, max_retries=3, default_retry_delay=60)
+@shared_task(bind=True, 
+             soft_time_limit=YOUTUBE_CONFIG['TASK_TIMEOUTS']['transcript_soft_limit'],
+             time_limit=YOUTUBE_CONFIG['TASK_TIMEOUTS']['transcript_hard_limit'],
+             max_retries=YOUTUBE_CONFIG['RETRY_CONFIG']['transcript']['max_retries'],
+             default_retry_delay=YOUTUBE_CONFIG['RETRY_CONFIG']['transcript']['countdown'],
+             autoretry_for=(Exception,),
+             retry_backoff=YOUTUBE_CONFIG['RETRY_CONFIG']['transcript']['backoff'],
+             retry_jitter=YOUTUBE_CONFIG['RETRY_CONFIG']['transcript']['jitter'])
 @idempotent_task
 def extract_video_transcript(self, metadata_result, url_request_id):
     """
@@ -167,6 +176,21 @@ def extract_video_transcript(self, metadata_result, url_request_id):
         Exception: If transcript extraction fails after retries
     """
     progress_recorder = ProgressRecorder(self)
+    url_request = None
+    
+    # Check if video was excluded in previous stage
+    if metadata_result and metadata_result.get('excluded'):
+        logger.info(f"Video was excluded in metadata stage: {metadata_result.get('exclusion_reason')}")
+        # Return immediately without processing transcript
+        return {
+            'video_id': metadata_result.get('video_id'),
+            'excluded': True,
+            'exclusion_reason': metadata_result.get('exclusion_reason'),
+            'skip_reason': 'excluded_in_metadata_stage'
+        }
+    video_metadata = None
+    video_id = None
+    transcript_obj = None
     
     try:
         progress_recorder.set_progress(0, 100, description="Starting transcript extraction")
@@ -197,27 +221,26 @@ def extract_video_transcript(self, metadata_result, url_request_id):
         
         progress_recorder.set_progress(20, 100, description="Extracting transcript from Decodo API")
         
-        # Extract transcript with timeout protection
-        with timeout(YOUTUBE_CONFIG['TASK_TIMEOUTS']['transcript_timeout'], "Transcript extraction"):
-            # Get the video's detected language or use fallback
-            detected_language = getattr(video_metadata, 'language', 'fallback-en') or 'fallback-en'
+        # Extract transcript (removed timeout wrapper since it's not functional)
+        # Get the video's detected language (using normalized metadata - no fallback needed)
+        detected_language = video_metadata.language
+        
+        # Convert to API-compatible language (fallback-en -> en)
+        api_language = get_api_language(detected_language)
+        
+        # Extract base language code (e.g., 'en' from 'en-US')
+        if '-' in api_language:
+            base_language = api_language.split('-')[0]
+        else:
+            base_language = api_language
             
-            # Convert to API-compatible language (fallback-en -> en)
-            api_language = get_api_language(detected_language)
-            
-            # Extract base language code (e.g., 'en' from 'en-US')
-            if '-' in api_language:
-                base_language = api_language.split('-')[0]
-            else:
-                base_language = api_language
-                
-            logger.info(f"Video language: {detected_language}, API language: {api_language}, using base language: {base_language}")
-            
-            # Use fallback extraction strategy
-            transcript_result, used_language, extraction_source = extract_transcript_with_fallback(video_id, base_language)
-            
-            logger.info(f"Transcript extracted using {extraction_source} for {video_id}")
-            logger.info(f"Extracted transcript with {len(transcript_result.get('segments', []))} segments using language: {used_language}")
+        logger.info(f"Video language: {detected_language}, API language: {api_language}, using base language: {base_language}")
+        
+        # Use fallback extraction strategy
+        transcript_result, used_language, extraction_source = extract_transcript_with_fallback(video_id, base_language)
+        
+        logger.info(f"Transcript extracted using {extraction_source} for {video_id}")
+        logger.info(f"Extracted transcript with {len(transcript_result.get('segments', []))} segments using language: {used_language}")
         
         progress_recorder.set_progress(60, 100, description="Validating transcript data")
         
@@ -245,7 +268,7 @@ def extract_video_transcript(self, metadata_result, url_request_id):
             transcript_obj.save()
             
             # Language detection for fallback languages only
-            if should_update_language(detected_language):
+            if detected_language and detected_language.startswith('fallback-'):
                 logger.info(f"Performing language detection for fallback language: {detected_language}")
                 is_english, confidence = detect_transcript_language(transcript_text)
                 if is_english:
@@ -254,7 +277,10 @@ def extract_video_transcript(self, metadata_result, url_request_id):
                     video_metadata.save()
                     logger.info(f"Language updated: {detected_language} → {updated_language} (confidence: {confidence:.3f})")
                 else:
-                    logger.info(f"Language kept as {detected_language} (English confidence: {confidence:.3f} < 0.7)")
+                    # Non-English content detected - log for classification stage
+                    logger.info(f"Non-English content detected (confidence: {confidence:.3f} < threshold)")
+                    logger.info(f"Video {video_id} language classification will be handled at final stage")
+                    # Note: Language-based exclusion moved to final classification stage
             
             # Clear existing segments (in case of retry)
             TranscriptSegment.objects.filter(transcript=transcript_obj).delete()
@@ -286,26 +312,63 @@ def extract_video_transcript(self, metadata_result, url_request_id):
         
         progress_recorder.set_progress(100, 100, description="Transcript extraction complete")
         
-        logger.info(f"Successfully extracted transcript with {len(validated_transcript)} segments using Decodo API")
+        logger.info(f"Successfully extracted transcript with {len(transcript_data)} segments using {extraction_source}")
         logger.info(f"Created {len(segments_created)} transcript segments")
         
         return {
-            'transcript_segments': len(validated_transcript),
+            'transcript_segments': len(transcript_data),
             'segments_created': len(segments_created),
             'language_used': used_language,
             'video_title': metadata_result.get('title', 'Unknown') if isinstance(metadata_result, dict) else video_metadata.title or 'Unknown'
         }
         
+    except SoftTimeLimitExceeded:
+        # Task is approaching timeout - save status and exit gracefully
+        logger.warning(f"Transcript extraction soft timeout reached for video {video_id or 'unknown'}")
+        
+        try:
+            # Update URLRequest with failure reason
+            url_request = URLRequestTable.objects.get(id=url_request_id)
+            url_request.failure_reason = 'no_transcript'
+            url_request.save()
+            
+            # Mark transcript as failed due to timeout
+            if video_metadata and video_id:
+                VideoTranscript.objects.update_or_create(
+                    video_id=video_id,
+                    defaults={
+                        'video_metadata': video_metadata,
+                        'transcript_text': '',
+                        'status': 'failed',
+                        'transcript_source': 'timeout'
+                    }
+                )
+                logger.error(f"Marked transcript extraction as failed due to timeout: {video_id}")
+                
+        except Exception as cleanup_error:
+            logger.error(f"Failed to update transcript status during timeout cleanup: {cleanup_error}")
+        
+        # Re-raise with specific timeout message
+        raise Exception(f"Transcript extraction timeout for video {video_id or 'unknown'}")
+        
     except Exception as e:
-        video_id_str = video_id if 'video_id' in locals() else 'unknown'
+        video_id_str = video_id if video_id else 'unknown'
         logger.error(f"Transcript extraction failed for video {video_id_str}: {e}")
         
         # Mark transcript as failed
         with transaction.atomic():
             try:
-                video_metadata = VideoMetadata.objects.get(url_request__id=url_request_id)
+                # Update URLRequest with failure reason
+                url_request = URLRequestTable.objects.get(id=url_request_id)
+                url_request.failure_reason = 'no_transcript'
+                url_request.save()
+                
+                if not video_metadata:
+                    video_metadata = VideoMetadata.objects.get(url_request__id=url_request_id)
+                    video_id_str = video_metadata.video_id
+                    
                 VideoTranscript.objects.update_or_create(
-                    video_id=video_metadata.video_id,
+                    video_id=video_id_str,
                     defaults={
                         'video_metadata': video_metadata,
                         'transcript_text': '',

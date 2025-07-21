@@ -5,8 +5,8 @@ Provides lightweight language detection for transcript text with fallback handli
 
 import logging
 from typing import Tuple
-from fast_langdetect import detect, DetectError, LangDetectConfig, LangDetector
-from video_processor.config import LANGUAGE_DETECTION_CONFIG
+from fast_langdetect import DetectError, LangDetectConfig, LangDetector
+from video_processor.config import LANGUAGE_DETECTION_CONFIG, BUSINESS_LOGIC_CONFIG
 
 logger = logging.getLogger(__name__)
 
@@ -90,7 +90,7 @@ def detect_transcript_language(transcript_text: str) -> Tuple[bool, float]:
         # Check if English and meets confidence threshold
         is_english = (
             language == 'en' and 
-            confidence >= LANGUAGE_DETECTION_CONFIG['confidence_threshold']
+            confidence >= BUSINESS_LOGIC_CONFIG['LANGUAGE_DETECTION']['confidence_threshold']
         )
         
         logger.info(
@@ -106,20 +106,6 @@ def detect_transcript_language(transcript_text: str) -> Tuple[bool, float]:
     except Exception as e:
         logger.error(f"Unexpected error in language detection: {e}")
         return False, 0.0
-
-
-def should_update_language(current_language: str) -> bool:
-    """
-    Check if language should be updated.
-    Only processes fallback-* languages to preserve audit trail.
-    
-    Args:
-        current_language: Current language code from metadata
-        
-    Returns:
-        True if language should be processed for detection and update
-    """
-    return current_language and current_language.startswith('fallback-')
 
 
 def get_api_language(metadata_language: str) -> str:
@@ -140,4 +126,72 @@ def get_api_language(metadata_language: str) -> str:
     if metadata_language.startswith('fallback-'):
         return metadata_language.replace('fallback-', '')
     
-    return metadata_language 
+    return metadata_language
+
+
+def should_exclude_for_language(video_metadata, transcript) -> Tuple[bool, str]:
+    """
+    Determine if video should be excluded based on language analysis.
+    
+    This function handles edge cases in language detection:
+    1. Foreign metadata + foreign transcript → exclude
+    2. English transcript + empty metadata → don't exclude
+    3. Foreign transcript + English metadata → exclude
+    
+    Args:
+        video_metadata: VideoMetadata instance with language info
+        transcript: VideoTranscript instance with transcript text
+        
+    Returns:
+        Tuple[bool, str]: (should_exclude, reason)
+    """
+    try:
+        # Get metadata language
+        metadata_language = getattr(video_metadata, 'language', '') or ''
+        metadata_is_english = metadata_language.lower() in ['en', 'en-us', 'en-gb', 'fallback-en']
+        
+        # Get transcript text and detect language
+        transcript_text = getattr(transcript, 'transcript_text', '') or ''
+        
+        # If no transcript, can't make language-based exclusion decision
+        if not transcript_text.strip():
+            logger.warning(f"No transcript text available for language check: {video_metadata.video_id}")
+            return False, "no_transcript_for_language_check"
+        
+        # Detect transcript language
+        transcript_is_english, confidence = detect_transcript_language(transcript_text)
+        
+        logger.info(
+            f"Language analysis for {video_metadata.video_id}: "
+            f"metadata_lang='{metadata_language}' (is_english={metadata_is_english}), "
+            f"transcript_is_english={transcript_is_english} (confidence={confidence:.3f})"
+        )
+        
+        # Case 1: Both metadata and transcript are non-English → exclude
+        if not metadata_is_english and not transcript_is_english:
+            logger.info(f"Excluding {video_metadata.video_id}: both metadata and transcript are non-English")
+            return True, "language_unsupported"
+        
+        # Case 2: English transcript but empty/missing metadata → don't exclude
+        if transcript_is_english and not metadata_language.strip():
+            logger.info(f"Keeping {video_metadata.video_id}: English transcript with empty metadata")
+            return False, "english_transcript_empty_metadata"
+        
+        # Case 3: Non-English transcript but English metadata → exclude (transcript is authoritative)
+        if not transcript_is_english and metadata_is_english:
+            logger.info(f"Excluding {video_metadata.video_id}: non-English transcript overrides English metadata")
+            return True, "language_unsupported"
+        
+        # Case 4: Both are English → don't exclude
+        if metadata_is_english and transcript_is_english:
+            logger.info(f"Keeping {video_metadata.video_id}: both metadata and transcript are English")
+            return False, "both_english"
+        
+        # Fallback: if we can't determine clearly, be conservative and don't exclude
+        logger.warning(f"Inconclusive language analysis for {video_metadata.video_id}, not excluding")
+        return False, "inconclusive_language_analysis"
+        
+    except Exception as e:
+        logger.error(f"Error in language exclusion check for {getattr(video_metadata, 'video_id', 'unknown')}: {e}")
+        # On error, be conservative and don't exclude
+        return False, f"language_check_error: {str(e)}" 

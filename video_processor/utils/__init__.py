@@ -20,6 +20,28 @@ handle_dead_letter_task = utils_module.handle_dead_letter_task
 atomic_with_callback = utils_module.atomic_with_callback
 update_task_progress = utils_module.update_task_progress
 
+# Import video filtering utilities
+from .video_filtering import (
+    extract_video_id_from_url,
+    is_video_excluded,
+    filter_excluded_videos,
+    add_video_to_exclusion_table,
+    get_exclusion_statistics
+)
+
+# Import music classification utilities
+from .music_classification import (
+    classify_music_content,
+    should_exclude_for_music,
+    get_music_classification_summary
+)
+
+# Import metadata normalization utilities
+from .metadata_normalizer import (
+    normalize_youtube_metadata,
+    YouTubeMetadataNormalizer
+)
+
 # Re-export all imported functions
 __all__ = [
     'timeout',
@@ -29,5 +51,18 @@ __all__ = [
     'idempotent_task',
     'handle_dead_letter_task',
     'atomic_with_callback',
-    'update_task_progress'
+    'update_task_progress',
+    # Video filtering utilities
+    'extract_video_id_from_url',
+    'is_video_excluded',
+    'filter_excluded_videos',
+    'add_video_to_exclusion_table',
+    'get_exclusion_statistics',
+    # Music classification utilities
+    'classify_music_content',
+    'should_exclude_for_music',
+    'get_music_classification_summary',
+    # Metadata normalization utilities
+    'normalize_youtube_metadata',
+    'YouTubeMetadataNormalizer'
 ] 

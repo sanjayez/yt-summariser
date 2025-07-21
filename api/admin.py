@@ -5,8 +5,8 @@ from django_celery_results.models import TaskResult
 # Register your models here.
 
 class URLRequestTableAdmin(admin.ModelAdmin):
-    list_display = ['request_id_short', 'url', 'ip_address', 'status', 'created_at']
-    list_filter = ['status', 'created_at']
+    list_display = ['request_id_short', 'url', 'ip_address', 'status', 'failure_reason', 'created_at']
+    list_filter = ['status', 'failure_reason', 'created_at']
     search_fields = ['url', 'ip_address']
     readonly_fields = ['request_id', 'created_at']
     

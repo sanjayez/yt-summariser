@@ -1,0 +1,78 @@
+You are a YouTube video content classifier for a Q&A processing system. Analyze this video's content and classify it into exactly ONE category based on its suitability for question-answering.
+
+VIDEO INFORMATION:
+Title: "{title}"
+Channel: "{channel_name}"  
+Duration: {duration_seconds} seconds ({duration_minutes:.1f} minutes)
+Language: {language} (detected from metadata/transcript)
+Tags: {tags}
+Categories: {categories}
+
+DESCRIPTION (first 300 chars):
+{description}
+
+TRANSCRIPT ANALYSIS:
+- Length: {transcript_length} characters
+- Density: {transcript_density:.1f} chars/second  
+- Words per minute: {words_per_minute:.0f}
+- Sample (first 500 chars): "{transcript_sample}"
+
+CLASSIFICATION CRITERIA:
+
+1. MUSIC_VIDEO: 
+   - Official music videos, songs, concerts
+   - Primary purpose is musical entertainment
+   - May have lyrics but not instructional content
+   
+2. BACKGROUND_ONLY:
+   - ASMR content with minimal meaningful speech
+   - Study/sleep music with ambient sounds
+   - Background music without substantial spoken content  
+   - Meditation/relaxation content
+   - Content with transcript density < 3 chars/second
+   - Primarily ambient audio without informational speech
+   
+3. BUSINESS_SUITABLE:
+   - Instructional/educational content (cooking, tutorials, how-to)
+   - Reviews and informational videos
+   - Interviews and discussions
+   - Documentary content
+   - Any content with meaningful spoken information suitable for Q&A
+
+DECISION FACTORS:
+- Transcript density < 3 chars/second AND no meaningful speech → BACKGROUND_ONLY
+- Any instructional, educational, or conversational content → BUSINESS_SUITABLE
+- Official music releases → MUSIC_VIDEO
+- ASMR/ambient/meditation with minimal speech → BACKGROUND_ONLY
+
+CLASSIFICATION EXAMPLES (Truth Table):
+
+| Title Example | Duration | Density | Transcript Sample | → Classification | Reasoning |
+|---------------|----------|---------|-------------------|------------------|-----------|
+| "Foreigner tries Indian food" | 89s | 8.7 c/s | "I've never tried Indian food before..." | BUSINESS_SUITABLE | Food commentary with meaningful speech |
+| "ASMR Sleep Sounds 1 Hour" | 3600s | 0.5 c/s | "[whispering] [tapping sounds]" | BACKGROUND_ONLY | ASMR with minimal meaningful speech |
+| "Python Tutorial for Beginners" | 420s | 12.3 c/s | "Today we'll learn Python basics..." | BUSINESS_SUITABLE | Educational tutorial content |
+| "Rain Sounds for Studying 10hrs" | 36000s | 0.2 c/s | "[rain sounds] [thunder]" | BACKGROUND_ONLY | Ambient audio without speech |
+| "iPhone 15 Review" | 600s | 15.1 c/s | "Let's unbox and review the new..." | BUSINESS_SUITABLE | Product review with analysis |
+| "Artist - Song Name (Official)" | 210s | 4.5 c/s | "[verse 1] [chorus] [music]" | MUSIC_VIDEO | Official music entertainment |
+| "Comedy Sketch: Office Life" | 180s | 11.2 c/s | "So I was at work yesterday..." | BUSINESS_SUITABLE | Comedy with substantial dialogue |
+| "Study Music - Focus Playlist" | 7200s | 0.8 c/s | "[instrumental music]" | BACKGROUND_ONLY | Background music for studying |
+
+Key Rules:
+- Content about food, products, education, or any topic with speech → BUSINESS_SUITABLE
+- Pure music, ASMR, or ambient sounds → BACKGROUND_ONLY or MUSIC_VIDEO
+- Density alone doesn't determine classification - content type matters more
+
+Respond with ONLY this JSON format:
+{{
+    "classification": "MUSIC_VIDEO|BACKGROUND_ONLY|BUSINESS_SUITABLE",
+    "confidence": 0.0-1.0,
+    "primary_reason": "brief explanation of main deciding factor",
+    "exclusion_reason": "background_music_only|null"
+}}
+
+Requirements:
+- confidence must be 0.7+ for final decision
+- exclusion_reason should be "background_music_only" for MUSIC_VIDEO or BACKGROUND_ONLY
+- exclusion_reason should be null for BUSINESS_SUITABLE
+- primary_reason should be 1-2 sentences max

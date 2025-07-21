@@ -1,24 +1,33 @@
 from celery import shared_task, chain, group
+from celery.exceptions import SoftTimeLimitExceeded
 import logging
 
 from api.models import URLRequestTable
+from ..config import YOUTUBE_CONFIG
 from ..validators import validate_youtube_url
 from ..utils import handle_dead_letter_task
 from .metadata import extract_video_metadata
 from .transcript import extract_video_transcript
 from .summary import generate_video_summary
-from .embedding import embed_video_content
+from .content_classifier import classify_and_exclude_video_llm
 from .status import update_overall_status
 
 logger = logging.getLogger(__name__)
 
 
-@shared_task(bind=True, name='video_processor.process_youtube_video')
+@shared_task(bind=True, 
+             name='video_processor.process_youtube_video',
+             soft_time_limit=YOUTUBE_CONFIG['TASK_TIMEOUTS']['workflow_soft_limit'],
+             time_limit=YOUTUBE_CONFIG['TASK_TIMEOUTS']['workflow_hard_limit'],
+             autoretry_for=(Exception,),
+             retry_backoff=YOUTUBE_CONFIG['RETRY_CONFIG']['metadata']['backoff'],
+             retry_jitter=YOUTUBE_CONFIG['RETRY_CONFIG']['metadata']['jitter'])
 def process_youtube_video(self, url_request_id):
     """
     Process a single YouTube video through the complete pipeline.
     
-    Executes the full workflow: metadata → transcript → summary → embedding → status update
+    Executes the full workflow: metadata → transcript → summary → classification → status update
+    Note: Embedding has been moved to a separate filtering layer
     
     Args:
         url_request_id (int): ID of the URLRequestTable to process
@@ -29,9 +38,14 @@ def process_youtube_video(self, url_request_id):
     Raises:
         Exception: If workflow initiation fails
     """
+    url_request = None
+    
     try:
-        # Validate input and get URL request
-        url_request = URLRequestTable.objects.select_related('video_metadata').get(id=url_request_id)
+        # Validate input and get URL request with related data to avoid N+1 queries
+        url_request = URLRequestTable.objects.select_related(
+            'video_metadata',
+            'video_metadata__video_transcript'
+        ).get(id=url_request_id)
         validate_youtube_url(url_request.url)
         
         # Store task ID for progress tracking
@@ -41,18 +55,42 @@ def process_youtube_video(self, url_request_id):
         logger.info(f"Starting video processing pipeline for request {url_request_id}")
         
         # Execute workflow chain: each task receives previous result as first argument
+        # Note: Embedding removed - will be handled by separate filtering layer
         workflow = chain(
             extract_video_metadata.s(url_request_id),
-            extract_video_transcript.s(url_request_id),
-            generate_video_summary.s(url_request_id),
-            embed_video_content.s(url_request_id),
-            update_overall_status.s(url_request_id)
+            extract_video_transcript.s(url_request_id),  # Pass url_request_id explicitly to ensure continuity
+            generate_video_summary.s(url_request_id),    # Pass url_request_id explicitly to ensure continuity
+            classify_and_exclude_video_llm.s(url_request_id),  # Pass url_request_id explicitly to ensure continuity
+            update_overall_status.s(url_request_id)      # Pass url_request_id explicitly to ensure continuity
         )
         
-        workflow.apply_async()
+        # Capture workflow result to enable result tracking and eliminate fire-and-forget behavior
+        result = workflow.apply_async()
+        
+        # Store chain task ID for progress tracking and result retrieval
+        url_request.chain_task_id = result.id
+        url_request.save(update_fields=['chain_task_id'])
         
         logger.info(f"Initiated processing pipeline for request {url_request_id}")
         return f"Initiated complete processing pipeline for request {url_request_id}"
+        
+    except SoftTimeLimitExceeded:
+        # Workflow orchestration is approaching timeout - this should not happen often
+        logger.warning(f"Workflow orchestration soft timeout reached for request {url_request_id}")
+        
+        try:
+            # Mark the URL request as failed due to orchestration timeout
+            if url_request:
+                url_request.status = 'failed'
+                url_request.failure_reason = 'technical_failure'
+                url_request.save()
+                logger.error(f"Marked workflow as failed due to orchestration timeout: {url_request_id}")
+                
+        except Exception as cleanup_error:
+            logger.error(f"Failed to update workflow status during timeout cleanup: {cleanup_error}")
+        
+        # Re-raise to mark task as failed
+        raise Exception(f"Workflow orchestration timeout for request {url_request_id}")
         
     except Exception as e:
         logger.error(f"Failed to initiate processing pipeline for {url_request_id}: {e}")
@@ -60,7 +98,13 @@ def process_youtube_video(self, url_request_id):
         raise
 
 
-@shared_task(bind=True, name='video_processor.process_parallel_videos')
+@shared_task(bind=True, 
+             name='video_processor.process_parallel_videos',
+             soft_time_limit=YOUTUBE_CONFIG['TASK_TIMEOUTS']['parallel_soft_limit'],
+             time_limit=YOUTUBE_CONFIG['TASK_TIMEOUTS']['parallel_hard_limit'],
+             autoretry_for=(Exception,),
+             retry_backoff=YOUTUBE_CONFIG['RETRY_CONFIG']['parallel']['backoff'],
+             retry_jitter=YOUTUBE_CONFIG['RETRY_CONFIG']['parallel']['jitter'])
 def process_parallel_videos(self, url_request_ids):
     """
     Process multiple videos in parallel.
@@ -104,6 +148,24 @@ def process_parallel_videos(self, url_request_ids):
             'url_request_ids': url_request_ids,
             'processing_type': 'parallel'
         }
+        
+    except SoftTimeLimitExceeded:
+        # Parallel orchestration is approaching timeout
+        logger.warning(f"Parallel orchestration soft timeout reached for {len(url_request_ids)} videos")
+        
+        try:
+            # Mark all URL requests as failed due to orchestration timeout
+            URLRequestTable.objects.filter(id__in=url_request_ids).update(
+                status='failed',
+                failure_reason='technical_failure'
+            )
+            logger.error(f"Marked {len(url_request_ids)} parallel videos as failed due to orchestration timeout")
+            
+        except Exception as cleanup_error:
+            logger.error(f"Failed to update parallel workflow status during timeout cleanup: {cleanup_error}")
+        
+        # Re-raise to mark task as failed
+        raise Exception(f"Parallel workflow orchestration timeout for {len(url_request_ids)} videos")
         
     except Exception as e:
         logger.error(f"Failed to start parallel processing: {e}")

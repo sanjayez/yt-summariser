@@ -60,7 +60,7 @@ class VideoMetadata(models.Model):
     
     # New fields from YouTube API
     upload_date = models.DateField(null=True, blank=True, help_text="When video was published")
-    language = models.CharField(max_length=10, null=True, blank=True, default='en', help_text="Primary language of the video")
+    language = models.CharField(max_length=12, null=True, blank=True, default='en', help_text="Primary language of the video")
     like_count = models.BigIntegerField(null=True, blank=True, help_text="Number of likes")
     channel_id = models.CharField(max_length=50, blank=True, help_text="YouTube channel ID")
     tags = models.JSONField(default=list, blank=True, help_text="Video tags for categorization")
@@ -276,11 +276,33 @@ def update_url_request_status(url_request):
         metadata_success = metadata_status in ['success', 'completed']
         transcript_success = transcript_status == 'success'
         
-        if metadata_success and transcript_success:
+        # Check if video is excluded - this takes precedence over metadata/transcript status
+        from video_processor.utils.video_filtering import extract_video_id_from_url
+        video_id = extract_video_id_from_url(url_request.url)
+        is_excluded = video_id and VideoExclusionTable.is_excluded(video_id)
+        
+        if is_excluded:
+            # Video was excluded by classifier - keep as failed
+            url_request.status = 'failed'
+            # Set failure reason if not already set
+            if not url_request.failure_reason:
+                url_request.failure_reason = 'excluded'
+        elif metadata_success and transcript_success:
             url_request.status = 'success'
+            # Clear failure reason on success
+            url_request.failure_reason = None
         # If either has failed
         elif metadata_status == 'failed' or transcript_status == 'failed':
             url_request.status = 'failed'
+            # ONLY set failure reason if not already set by processors
+            # Processors know the specific failure type better than this general function
+            if not url_request.failure_reason:
+                # Determine failure reason based on which component failed
+                # But prefer transcript failure over metadata failure for more specific diagnosis
+                if transcript_status == 'failed':
+                    url_request.failure_reason = 'no_transcript'
+                elif metadata_status == 'failed':
+                    url_request.failure_reason = 'no_metadata'
         # Otherwise keep as processing
         else:
             url_request.status = 'processing'
@@ -291,3 +313,83 @@ def update_url_request_status(url_request):
         # If either model doesn't exist yet, keep as processing
         url_request.status = 'processing'
         url_request.save()
+
+
+class VideoExclusionTable(models.Model):
+    """
+    Tracks videos that cannot be processed for business reasons.
+    
+    This table serves as:
+    1. A lookup table to prevent reprocessing known problematic videos
+    2. Analytics source for understanding video suitability patterns
+    3. Business intelligence for platform optimization
+    """
+    
+    EXCLUSION_REASONS = [
+        ('privacy_restricted', 'Privacy Restricted'),
+        ('language_unsupported', 'Language Not Supported'), 
+        ('content_unavailable', 'Content Unavailable'),
+        ('duration_too_short', 'Duration Too Short'),
+        ('duration_too_long', 'Duration Too Long'),
+        ('transcript_unavailable', 'No Transcript Available'),
+        ('background_music_only', 'Background Music Only'),  # Videos with background music that interfere with Q&A
+    ]
+    
+    video_id = models.CharField(
+        max_length=20, 
+        unique=True,
+        help_text="YouTube video ID (extracted from URL)"
+    )
+    video_url = models.URLField(
+        max_length=500,
+        help_text="Original YouTube video URL"
+    )
+    exclusion_reason = models.CharField(
+        max_length=30, 
+        choices=EXCLUSION_REASONS,
+        help_text="Business reason why this video cannot be processed"
+    )
+    detected_at = models.DateTimeField(
+        auto_now_add=True,
+        help_text="When this exclusion was first detected"
+    )
+    
+    class Meta:
+        ordering = ['-detected_at']
+        indexes = [
+            models.Index(fields=['video_id']),  # Fast lookup during pre-filtering
+            models.Index(fields=['exclusion_reason']),  # Analytics queries
+            models.Index(fields=['detected_at']),  # Time-based analytics
+        ]
+    
+    def __str__(self):
+        return f"Excluded: {self.video_id} ({self.get_exclusion_reason_display()})"
+    
+    @classmethod
+    def is_excluded(cls, video_id: str) -> bool:
+        """
+        Quick check if a video is in the exclusion list.
+        
+        Args:
+            video_id: YouTube video ID to check
+            
+        Returns:
+            bool: True if video should be excluded from processing
+        """
+        return cls.objects.filter(video_id=video_id).exists()
+    
+    @classmethod
+    def get_exclusion_reason(cls, video_id: str) -> str:
+        """
+        Get the exclusion reason for a video.
+        
+        Args:
+            video_id: YouTube video ID to check
+            
+        Returns:
+            str: Exclusion reason or None if not excluded
+        """
+        try:
+            return cls.objects.get(video_id=video_id).exclusion_reason
+        except cls.DoesNotExist:
+            return None

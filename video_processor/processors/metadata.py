@@ -11,8 +11,9 @@ from ..config import YOUTUBE_CONFIG, TASK_STATES
 from ..validators import validate_video_info
 from ..utils import (
     timeout, idempotent_task, handle_dead_letter_task, 
-    update_task_progress
+    update_task_progress, add_video_to_exclusion_table, extract_video_id_from_url
 )
+from ..utils.metadata_normalizer import normalize_youtube_metadata
 
 logger = logging.getLogger(__name__)
 
@@ -35,6 +36,58 @@ def extract_thumbnail_url(info):
     # Find the highest quality thumbnail
     best_thumbnail = max(thumbnails, key=lambda x: x.get('width', 0) * x.get('height', 0), default={})
     return best_thumbnail.get('url', '')
+
+def _handle_metadata_business_failure(url_request: URLRequestTable, error_message: str):
+    """
+    Handle business logic failures for metadata extraction.
+    
+    Classifies the failure and adds to VideoExclusionTable if it's a business failure
+    (not a technical failure that could be retried).
+    
+    Args:
+        url_request: URLRequestTable instance
+        error_message: Error message from the failure
+    """
+    video_url = url_request.url
+    exclusion_reason = None
+    
+    # Classify the failure reason based on error message
+    # Only add to exclusion table for PERMANENT business logic failures
+    error_lower = error_message.lower()
+    
+    if any(keyword in error_lower for keyword in ['private video', 'video unavailable', 'restricted']):
+        exclusion_reason = 'content_unavailable'
+    elif any(keyword in error_lower for keyword in ['age restricted', 'sign in to confirm']):
+        exclusion_reason = 'privacy_restricted'
+    elif any(keyword in error_lower for keyword in ['video too short', 'duration too short']):
+        exclusion_reason = 'duration_too_short'
+    elif any(keyword in error_lower for keyword in ['video too long', 'duration too long', 'video exceeds', 'duration exceeds']):
+        exclusion_reason = 'duration_too_long'
+    else:
+        # For unclear/technical failures, DON'T add to exclusion table
+        # Let retry mechanism handle temporary issues
+        exclusion_reason = None
+        logger.warning(f"Metadata extraction failed with unclear error (not adding to exclusion): {error_message}")
+    
+    # Add to exclusion table
+    if exclusion_reason:
+        try:
+            added = add_video_to_exclusion_table(video_url, exclusion_reason)
+            if added:
+                video_id = extract_video_id_from_url(video_url)
+                logger.info(f"Added video {video_id} to exclusion table: {exclusion_reason}")
+        except Exception as e:
+            logger.warning(f"Failed to add video to exclusion table: {e}")
+    
+    # Update URLRequest status to 'failed' and set appropriate failure reason
+    url_request.status = 'failed'
+    if exclusion_reason:
+        # This is a business exclusion, not a metadata extraction failure
+        url_request.failure_reason = 'excluded'
+    else:
+        # This is an actual metadata extraction failure
+        url_request.failure_reason = 'no_metadata'
+    url_request.save()
 
 def fallback_yt_dlp_extraction(url):
     """Fallback metadata extraction using yt-dlp"""
@@ -87,57 +140,45 @@ def extract_video_metadata(self, url_request_id):
         
         logger.info(f"Successfully extracted metadata for {info.get('title', 'Unknown')}")
         
-        # Parse the metadata
-        metadata = {
-            'id': info.get('id'),  # For validation
-            'title': info.get('title', '').strip(),
-            'description': info.get('description', ''),
-            'duration': info.get('duration'),
-            'channel_name': info.get('uploader', ''),
-            'view_count': info.get('view_count'),
-            'upload_date': parse_upload_date(info.get('upload_date')),
-            'language': info.get('language', 'en'),
-            'like_count': info.get('like_count'),
-            'channel_id': info.get('uploader_id', ''),
-            'tags': info.get('tags', []) or [],
-            'categories': info.get('categories', []) or [],
-            'thumbnail': info.get('thumbnail', ''),
-            'channel_follower_count': info.get('uploader_subscriber_count'),
-            'channel_is_verified': info.get('uploader_verified', False),
-            'uploader_id': info.get('uploader_id', ''),
-        }
+        # Normalize metadata using the centralized normalization layer
+        metadata = normalize_youtube_metadata(info)
         
-        # Validate metadata
+        # Validate metadata (now using normalized data)
         validate_video_info(metadata)
         
-        # Save to database with transaction
+        # Extract language information (exclusion will be handled after classification)
+        video_language = metadata.get('language', 'en')
+        # Save to database with transaction (using normalized data)
         with transaction.atomic():
             video_metadata = VideoMetadata.objects.create(
-                video_id=metadata['id'],  # Convert id to video_id for database
-                title=(metadata['title'] or 'Untitled')[:255],  # Safe slicing with fallback
-                description=metadata['description'] or '',
+                video_id=metadata['video_id'],
+                title=metadata['title'],
+                description=metadata['description'],
                 duration=metadata['duration'],
-                channel_name=(metadata['channel_name'] or 'Unknown Channel')[:100],  # Safe slicing with fallback
+                channel_name=metadata['channel_name'],
                 view_count=metadata['view_count'],
                 upload_date=metadata['upload_date'],
-                language=(metadata['language'] or 'fallback-en'),  # Fallback for undetected language (fallback-en is exactly 10 chars)
+                language=metadata['language'],
                 like_count=metadata['like_count'],
-                channel_id=(metadata['channel_id'] or '')[:100],  # Safe slicing with fallback
-                tags=metadata['tags'] or [],
-                categories=metadata['categories'] or [],
-                thumbnail=metadata['thumbnail'] or '',
+                channel_id=metadata['channel_id'],
+                tags=metadata['tags'],
+                categories=metadata['categories'],
+                thumbnail=metadata['thumbnail'],
                 channel_follower_count=metadata['channel_follower_count'],
-                channel_is_verified=metadata['channel_is_verified'] or False,
-                uploader_id=(metadata['uploader_id'] or '')[:100],  # Safe slicing with fallback
+                channel_is_verified=metadata['channel_is_verified'],
+                uploader_id=metadata['uploader_id'],
                 url_request=url_request,
-                status=TASK_STATES['COMPLETED']
+                status='success'
             )
+            
+            # Note: Music content classification moved to final classification stage
+            # Video metadata extraction completed successfully
         
-        logger.info(f"Metadata extraction completed successfully for video {metadata['id']}")
+        logger.info(f"Metadata extraction completed successfully for video {metadata['video_id']}")
         
         # Return the expected format for workflow chain
         return {
-            'video_id': metadata['id'], 
+            'video_id': metadata['video_id'], 
             'title': metadata['title']
         }
         
@@ -145,9 +186,8 @@ def extract_video_metadata(self, url_request_id):
         error_msg = f"yt-dlp error: {str(e)}"
         logger.error(f"yt-dlp error for request {url_request_id}: {error_msg}")
         
-        # Update URL request status
-        url_request.status = TASK_STATES['FAILED_PERMANENTLY']
-        url_request.save()
+        # Handle business failure and update status
+        _handle_metadata_business_failure(url_request, error_msg)
         
         # Handle specific errors
         if 'Video unavailable' in str(e):
@@ -166,8 +206,7 @@ def extract_video_metadata(self, url_request_id):
         
         try:
             url_request = URLRequestTable.objects.get(id=url_request_id)
-            url_request.status = TASK_STATES['FAILED_PERMANENTLY']
-            url_request.save()
+            _handle_metadata_business_failure(url_request, str(e))
         except:
             pass
             

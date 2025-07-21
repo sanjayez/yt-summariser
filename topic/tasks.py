@@ -6,6 +6,7 @@ Handles asynchronous YouTube search and AI processing operations
 import logging
 import asyncio
 from celery import shared_task
+from celery.exceptions import SoftTimeLimitExceeded
 from django.db import transaction
 
 from ai_utils.config import get_config
@@ -16,11 +17,21 @@ from topic.services.search_service import YouTubeSearchService, SearchRequest
 from topic.services.providers.scrapetube_provider import ScrapeTubeProvider
 from topic.utils.session_utils import update_session_status
 from topic.models import SearchRequest as SearchRequestModel, SearchSession
+from video_processor.config import YOUTUBE_CONFIG, BUSINESS_LOGIC_CONFIG
+from video_processor.utils import handle_dead_letter_task
 
 logger = logging.getLogger(__name__)
 
 
-@shared_task(bind=True, name='topic.process_search_query')
+@shared_task(bind=True, 
+             name='topic.process_search_query',
+             soft_time_limit=YOUTUBE_CONFIG['TASK_TIMEOUTS']['search_soft_limit'],
+             time_limit=YOUTUBE_CONFIG['TASK_TIMEOUTS']['search_hard_limit'],
+             max_retries=YOUTUBE_CONFIG['RETRY_CONFIG']['search']['max_retries'],
+             default_retry_delay=YOUTUBE_CONFIG['RETRY_CONFIG']['search']['countdown'],
+             autoretry_for=(Exception,),
+             retry_backoff=YOUTUBE_CONFIG['RETRY_CONFIG']['search']['backoff'],
+             retry_jitter=YOUTUBE_CONFIG['RETRY_CONFIG']['search']['jitter'])
 def process_search_query(self, search_id: str, max_videos: int = 5):
     """
     Process a search query asynchronously
@@ -38,6 +49,9 @@ def process_search_query(self, search_id: str, max_videos: int = 5):
         dict: Processing result with status and details
     """
     logger.info(f"Starting async processing for search request: {search_id}")
+    
+    search_request = None
+    session = None
     
     try:
         # Get search request from database
@@ -76,18 +90,17 @@ def process_search_query(self, search_id: str, max_videos: int = 5):
                 timeout=30,
                 filter_shorts=True,      # Filter out YouTube shorts
                 english_only=True,       # Only English videos
-                min_duration_seconds=60, # Videos must be at least 60 seconds
-                max_duration_seconds=900 # Cap videos at 15 minutes for MVP testing
+                min_duration_seconds=BUSINESS_LOGIC_CONFIG['DURATION_LIMITS']['minimum_seconds'],
+                max_duration_seconds=BUSINESS_LOGIC_CONFIG['DURATION_LIMITS']['maximum_seconds']
             )
             youtube_search_service = YouTubeSearchService(youtube_search_provider)
             
             logger.debug("AI services initialized successfully")
             
         except Exception as e:
-            error_msg = f"AI services initialization failed: {str(e)}"
+            error_msg = f"Failed to initialize AI services: {str(e)}"
             logger.error(error_msg)
             
-            # Update database with error
             _update_search_request_error(search_request, error_msg)
             _update_session_error(session)
             
@@ -98,54 +111,59 @@ def process_search_query(self, search_id: str, max_videos: int = 5):
                 'search_id': search_id
             }
         
-        # Process query using LLM
-        processed_query = original_query  # Fallback to original query
+        # Process query with LLM enhancement (async operation)
         try:
-            logger.debug(f"Enhancing query with LLM: '{original_query}'")
+            logger.debug("Starting LLM query processing")
             
-            # Run async query enhancement (Celery-safe approach)
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
+            # Create event loop if none exists
             try:
-                enhancement_result = loop.run_until_complete(
-                    query_processor.enhance_query(original_query, job_id=f"search_{search_id}")
-                )
-            finally:
-                loop.close()
+                loop = asyncio.get_event_loop()
+            except RuntimeError:
+                asyncio.set_event_loop(asyncio.new_event_loop())
+                loop = asyncio.get_event_loop()
             
-            if enhancement_result['status'] == 'completed':
-                processed_query = enhancement_result['enhanced_query']
-                logger.info(f"Query enhanced: '{original_query}' -> '{processed_query}'")
+            # Process query asynchronously - use enhance_query method
+            enhancement_result = loop.run_until_complete(
+                query_processor.enhance_query(original_query)
+            )
+            
+            # Extract enhanced query from result
+            if enhancement_result.get("status") == "completed":
+                processed_query = enhancement_result.get("enhanced_query", original_query)
+                logger.info(f"Enhanced query: '{original_query}' → '{processed_query}'")
             else:
-                logger.warning(f"Query enhancement failed: {enhancement_result.get('error', 'Unknown error')}")
-                # Continue with original query as fallback
-                
+                processed_query = original_query
+                logger.warning(f"Query enhancement failed: {enhancement_result.get('error', 'Unknown error')}, using original query")
+            
         except Exception as e:
-            logger.error(f"Query processing failed: {e}")
-            # Continue with original query as fallback
+            error_msg = f"Query enhancement failed: {str(e)}"
+            logger.error(error_msg)
+            
+            # Use original query if enhancement fails
             processed_query = original_query
+            logger.info("Using original query due to enhancement failure")
         
-        # Search YouTube videos
-        video_urls = []
+        # Perform YouTube search
         try:
-            logger.debug(f"Searching YouTube for: '{processed_query}'")
+            logger.debug(f"Starting YouTube search for: '{processed_query}'")
             
             search_request_obj = SearchRequest(
                 query=processed_query,
-                max_results=max_videos,
-                include_metadata=False
+                max_results=max_videos
             )
             
             search_response = youtube_search_service.search(search_request_obj)
             video_urls = search_response.results
             
-            logger.info(f"Found {len(video_urls)} videos for query '{processed_query}'")
+            logger.info(f"Found {len(video_urls)} videos for query: '{processed_query}'")
             
+            if not video_urls:
+                logger.warning(f"No videos found for query: '{processed_query}'")
+                
         except Exception as e:
             error_msg = f"YouTube search failed: {str(e)}"
             logger.error(error_msg)
             
-            # Update database with error
             _update_search_request_error(search_request, error_msg)
             _update_session_error(session)
             
@@ -195,20 +213,119 @@ def process_search_query(self, search_id: str, max_videos: int = 5):
             'total_videos': len(video_urls)
         }
         
+    except SoftTimeLimitExceeded:
+        # Search processing is approaching timeout
+        logger.warning(f"Search processing soft timeout reached for search {search_id}")
+        
+        try:
+            # Mark search as failed due to timeout
+            if search_request:
+                _update_search_request_error(search_request, "Search processing timed out - query may be too complex")
+            if session:
+                _update_session_error(session)
+            logger.error(f"Marked search processing as failed due to timeout: {search_id}")
+            
+        except Exception as cleanup_error:
+            logger.error(f"Failed to update search status during timeout cleanup: {cleanup_error}")
+        
+        # Re-raise to mark task as failed
+        raise Exception(f"Search processing timeout for search {search_id}")
+        
     except Exception as e:
-        logger.error(f"Unexpected error in process_search_query: {e}")
+        logger.error(f"Unexpected error in search processing: {e}")
         
-        # Try to update database with error if we have the search_request
-        if 'search_request' in locals():
-            try:
+        # Handle dead letter queue on final failure
+        if self.request.retries >= self.max_retries:
+            handle_dead_letter_task('process_search_query', self.request.id, [search_id], {}, e)
+        
+        try:
+            if search_request:
                 _update_search_request_error(search_request, f"Unexpected error: {str(e)}")
-                _update_session_error(search_request.search_session)
-            except Exception as db_error:
-                logger.error(f"Failed to update search request with error: {db_error}")
-        
+            if session:
+                _update_session_error(session)
+        except:
+            pass
+            
         return {
             'status': 'failed',
-            'error': 'Unexpected error',
+            'error': 'Unexpected processing error',
+            'details': str(e),
+            'search_id': search_id
+        }
+
+
+@shared_task(bind=True, 
+             name='topic.process_search_with_videos',
+             soft_time_limit=YOUTUBE_CONFIG['TASK_TIMEOUTS']['parallel_soft_limit'],
+             time_limit=YOUTUBE_CONFIG['TASK_TIMEOUTS']['parallel_hard_limit'],
+             autoretry_for=(Exception,),
+             retry_backoff=YOUTUBE_CONFIG['RETRY_CONFIG']['parallel']['backoff'],
+             retry_jitter=YOUTUBE_CONFIG['RETRY_CONFIG']['parallel']['jitter'])
+def process_search_with_videos(self, search_id: str, max_videos: int = 5, start_video_processing: bool = False):
+    """
+    Combined search and video processing workflow.
+    
+    Args:
+        search_id: UUID of the SearchRequest to process
+        max_videos: Maximum number of videos to find and process
+        start_video_processing: Whether to immediately start video processing
+        
+    Returns:
+        dict: Combined search and processing result
+    """
+    logger.info(f"Starting combined search and video processing for {search_id}")
+    
+    search_request = None
+    
+    try:
+        # First, run the search
+        search_result = process_search_query(search_id, max_videos)
+        
+        if search_result['status'] != 'success':
+            return search_result
+        
+        # If video processing is requested, start it
+        if start_video_processing and search_result.get('video_urls'):
+            logger.info(f"Starting video processing for {len(search_result['video_urls'])} videos")
+            
+            try:
+                # Import here to avoid circular imports
+                from topic.parallel_tasks import process_search_results
+                
+                # Start video processing
+                processing_task = process_search_results.delay(search_id)
+                
+                search_result['video_processing_task_id'] = processing_task.id
+                search_result['video_processing_started'] = True
+                
+            except Exception as e:
+                logger.error(f"Failed to start video processing: {e}")
+                search_result['video_processing_error'] = str(e)
+                search_result['video_processing_started'] = False
+        
+        return search_result
+        
+    except SoftTimeLimitExceeded:
+        # Combined processing is approaching timeout
+        logger.warning(f"Combined search and video processing soft timeout reached for search {search_id}")
+        
+        try:
+            # Mark search as failed due to timeout
+            if search_request:
+                _update_search_request_error(search_request, "Combined processing timed out")
+            logger.error(f"Marked combined processing as failed due to timeout: {search_id}")
+            
+        except Exception as cleanup_error:
+            logger.error(f"Failed to update status during combined processing timeout cleanup: {cleanup_error}")
+        
+        # Re-raise to mark task as failed
+        raise Exception(f"Combined search and video processing timeout for search {search_id}")
+        
+    except Exception as e:
+        logger.error(f"Error in combined search and video processing: {e}")
+        return {
+            'status': 'failed',
+            'error': 'Combined processing failed',
             'details': str(e),
             'search_id': search_id
         }
@@ -229,61 +346,4 @@ def _update_session_error(session: SearchSession):
     try:
         update_session_status(session, 'failed')
     except Exception as e:
-        logger.error(f"Failed to update session status: {e}")
-
-
-@shared_task(bind=True, name='topic.process_search_with_videos')
-def process_search_with_videos(self, search_id: str, max_videos: int = 5, start_video_processing: bool = False):
-    """
-    Integrated search and video processing task.
-    
-    This task performs the search and optionally starts video processing
-    for the found videos.
-    
-    Args:
-        search_id: UUID of the SearchRequest to process
-        start_video_processing: Whether to start video processing after search
-        
-    Returns:
-        dict: Processing result with status and details
-    """
-    logger.info(f"Starting integrated search and video processing for request: {search_id}")
-    
-    try:
-        # First, perform the search - call directly, not async
-        search_result = process_search_query(search_id, max_videos)
-        
-        if search_result['status'] != 'success':
-            logger.error(f"Search failed for request {search_id}: {search_result}")
-            return search_result
-        
-        # If video processing is requested and we have videos
-        if start_video_processing and search_result.get('video_urls'):
-            logger.info(f"Starting video processing for {len(search_result['video_urls'])} videos")
-            
-            # Import here to avoid circular imports
-            from topic.parallel_tasks import process_search_results
-            
-            # Start parallel video processing
-            video_processing_result = process_search_results.apply_async(args=[search_id])
-            
-            # Return combined result
-            return {
-                'status': 'processing_videos',
-                'search_id': search_id,
-                'search_result': search_result,
-                'video_processing_task_id': video_processing_result.id,
-                'message': f"Search completed, processing {len(search_result['video_urls'])} videos"
-            }
-        else:
-            # Return search result only
-            return search_result
-            
-    except Exception as e:
-        logger.error(f"Unexpected error in process_search_with_videos: {e}")
-        return {
-            'status': 'failed',
-            'error': 'Unexpected error',
-            'details': str(e),
-            'search_id': search_id
-        } 
+        logger.error(f"Failed to update session with error: {e}") 

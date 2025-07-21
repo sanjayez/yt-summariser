@@ -6,8 +6,15 @@ import uuid
 class URLRequestTable(models.Model):
     STATUS_CHOICES = [
         ('processing', 'Processing'),
-        ('failed', 'Failed'),
         ('success', 'Success'),
+        ('failed', 'Failed'),
+    ]
+    
+    FAILURE_REASON_CHOICES = [
+        ('excluded', 'Excluded'),
+        ('no_transcript', 'No Transcript'),
+        ('no_metadata', 'No Metadata'),
+        ('technical_failure', 'Technical Failure'),
     ]
     
     request_id = models.UUIDField(default=uuid.uuid4, editable=False, unique=True)
@@ -28,7 +35,30 @@ class URLRequestTable(models.Model):
         blank=True,
         help_text="ID of the main Celery task processing this video"
     )
+    chain_task_id = models.CharField(
+        max_length=255,
+        null=True,
+        blank=True,
+        help_text="ID of the Celery chain task for result tracking"
+    )
+    failure_reason = models.CharField(
+        max_length=20,
+        choices=FAILURE_REASON_CHOICES,
+        null=True,
+        blank=True,
+        help_text="Reason why the video processing failed"
+    )
     created_at = models.DateTimeField(auto_now_add=True)
     
     def __str__(self):
         return f"Request {str(self.request_id)[:8]}"
+    
+    class Meta:
+        indexes = [
+            models.Index(fields=['status']),
+            models.Index(fields=['failure_reason']),
+            models.Index(fields=['created_at']),
+            models.Index(fields=['status', 'created_at']),  # Composite index for common queries
+            models.Index(fields=['status', 'failure_reason']),  # Composite index for filtering
+        ]
+        ordering = ['-created_at']

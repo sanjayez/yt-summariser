@@ -8,6 +8,7 @@ Implements 4-layer embedding strategy for comprehensive video content search:
 """
 
 from celery import shared_task
+from celery.exceptions import SoftTimeLimitExceeded
 from celery_progress.backend import ProgressRecorder
 from django.db import transaction
 import logging
@@ -240,10 +241,13 @@ def embed_video_content_sync(video_metadata: VideoMetadata, transcript: VideoTra
 
 @shared_task(bind=True,
              name='video_processor.embed_video_content',
+             soft_time_limit=YOUTUBE_CONFIG['TASK_TIMEOUTS']['embedding_soft_limit'],
+             time_limit=YOUTUBE_CONFIG['TASK_TIMEOUTS']['embedding_hard_limit'],
+             max_retries=YOUTUBE_CONFIG['RETRY_CONFIG']['embedding']['max_retries'],
+             default_retry_delay=YOUTUBE_CONFIG['RETRY_CONFIG']['embedding']['countdown'],
              autoretry_for=(Exception,),
              retry_backoff=YOUTUBE_CONFIG['RETRY_CONFIG']['embedding']['backoff'],
-             retry_jitter=YOUTUBE_CONFIG['RETRY_CONFIG']['embedding']['jitter'],
-             retry_kwargs=YOUTUBE_CONFIG['RETRY_CONFIG']['embedding'])
+             retry_jitter=YOUTUBE_CONFIG['RETRY_CONFIG']['embedding']['jitter'])
 @idempotent_task
 def embed_video_content(self, summary_result, url_request_id):
     """
@@ -259,6 +263,10 @@ def embed_video_content(self, summary_result, url_request_id):
     Raises:
         Exception: If embedding process fails after retries
     """
+    url_request = None
+    video_metadata = None
+    transcript = None
+    
     try:
         # Set initial progress
         progress_recorder = ProgressRecorder(self)
@@ -310,13 +318,31 @@ def embed_video_content(self, summary_result, url_request_id):
         
         return embedding_result
         
+    except SoftTimeLimitExceeded:
+        # Task is approaching timeout - save status and exit gracefully
+        logger.warning(f"Embedding generation soft timeout reached for request {url_request_id}")
+        
+        try:
+            # Mark embedding as failed due to timeout
+            if video_metadata:
+                video_metadata.is_embedded = False
+                video_metadata.save()
+                logger.error(f"Marked embedding generation as failed due to timeout: {video_metadata.video_id}")
+                
+        except Exception as cleanup_error:
+            logger.error(f"Failed to update embedding status during timeout cleanup: {cleanup_error}")
+        
+        # Re-raise with specific timeout message
+        raise Exception(f"Embedding generation timeout for request {url_request_id}")
+        
     except Exception as e:
         logger.error(f"Embedding failed for request {url_request_id}: {e}")
         
         # Mark as failed but don't stop the chain
         try:
             with transaction.atomic():
-                url_request = URLRequestTable.objects.select_related(
+                if not url_request:
+                    url_request = URLRequestTable.objects.select_related(
                     'video_metadata'
                 ).get(id=url_request_id)
                 

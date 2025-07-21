@@ -4,6 +4,7 @@ Generates AI-powered summaries and key points from video transcripts using OpenA
 """
 
 from celery import shared_task
+from celery.exceptions import SoftTimeLimitExceeded
 from celery_progress.backend import ProgressRecorder
 from django.db import transaction
 import logging
@@ -272,10 +273,13 @@ Create a unified, well-structured summary with key points. Focus on the main the
 
 @shared_task(bind=True,
              name='video_processor.generate_video_summary',
+             soft_time_limit=YOUTUBE_CONFIG['TASK_TIMEOUTS']['summary_soft_limit'],
+             time_limit=YOUTUBE_CONFIG['TASK_TIMEOUTS']['summary_hard_limit'],
+             max_retries=YOUTUBE_CONFIG['RETRY_CONFIG']['summary']['max_retries'],
+             default_retry_delay=YOUTUBE_CONFIG['RETRY_CONFIG']['summary']['countdown'],
              autoretry_for=(Exception,),
              retry_backoff=YOUTUBE_CONFIG['RETRY_CONFIG']['summary']['backoff'],
-             retry_jitter=YOUTUBE_CONFIG['RETRY_CONFIG']['summary']['jitter'],
-             retry_kwargs=YOUTUBE_CONFIG['RETRY_CONFIG']['summary'])
+             retry_jitter=YOUTUBE_CONFIG['RETRY_CONFIG']['summary']['jitter'])
 @idempotent_task
 def generate_video_summary(self, transcript_result, url_request_id):
     """
@@ -291,6 +295,21 @@ def generate_video_summary(self, transcript_result, url_request_id):
     Raises:
         Exception: If summary generation fails after retries
     """
+    url_request = None
+    video_metadata = None
+    transcript = None
+    
+    # Check if video was excluded in previous stage
+    if transcript_result and transcript_result.get('excluded'):
+        logger.info(f"Video was excluded in previous stage: {transcript_result.get('exclusion_reason')}")
+        # Return immediately without processing summary
+        return {
+            'video_id': transcript_result.get('video_id'),
+            'excluded': True,
+            'exclusion_reason': transcript_result.get('exclusion_reason'),
+            'skip_reason': 'excluded_in_previous_stage'
+        }
+    
     try:
         # Set initial progress
         progress_recorder = ProgressRecorder(self)
@@ -351,15 +370,34 @@ def generate_video_summary(self, transcript_result, url_request_id):
         logger.info(f"Successfully generated summary for video {video_metadata.video_id}")
         return result
         
+    except SoftTimeLimitExceeded:
+        # Task is approaching timeout - save status and exit gracefully
+        logger.warning(f"Summary generation soft timeout reached for request {url_request_id}")
+        
+        try:
+            # Mark summary as failed due to timeout
+            if transcript:
+                transcript.summary = "Summary generation timed out - transcript may be too long or LLM API unavailable"
+                transcript.key_points = []
+                transcript.save()
+                logger.error(f"Marked summary generation as failed due to timeout: {video_metadata.video_id if video_metadata else 'unknown'}")
+                
+        except Exception as cleanup_error:
+            logger.error(f"Failed to update summary status during timeout cleanup: {cleanup_error}")
+        
+        # Re-raise with specific timeout message
+        raise Exception(f"Summary generation timeout for request {url_request_id}")
+        
     except Exception as e:
         logger.error(f"Summary generation failed for request {url_request_id}: {e}")
         
         # Mark transcript summary as failed but don't stop the chain
         try:
             with transaction.atomic():
-                url_request = URLRequestTable.objects.select_related(
-                    'video_metadata'
-                ).get(id=url_request_id)
+                if not url_request:
+                    url_request = URLRequestTable.objects.select_related(
+                        'video_metadata'
+                    ).get(id=url_request_id)
                 
                 if (hasattr(url_request, 'video_metadata') and 
                     hasattr(url_request.video_metadata, 'video_transcript')):

@@ -56,12 +56,10 @@ for i in $(seq 1 $WORKER_COUNT); do
     celery -A yt_summariser worker \
         --loglevel=info \
         --hostname=worker$i@%h \
-        --concurrency=1 \
+        --concurrency=4 \
         --prefetch-multiplier=1 \
-        --max-tasks-per-child=5 \
+        --max-tasks-per-child=20 \
         --max-memory-per-child=300000 \
-        --without-gossip \
-        --without-mingle \
         --time-limit=2100 \
         --soft-time-limit=1800 \
         --detach \

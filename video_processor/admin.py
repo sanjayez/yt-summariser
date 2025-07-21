@@ -1,7 +1,7 @@
 from django.contrib import admin
 
 # Register your models here.
-from .models import VideoMetadata, VideoTranscript, TranscriptSegment
+from .models import VideoMetadata, VideoTranscript, TranscriptSegment, VideoExclusionTable
 
 @admin.register(VideoMetadata)
 class VideoMetadataAdmin(admin.ModelAdmin):
@@ -61,3 +61,70 @@ class TranscriptSegmentAdmin(admin.ModelAdmin):
     def text_preview(self, obj):
         return obj.text[:50] + "..." if len(obj.text) > 50 else obj.text
     text_preview.short_description = 'Text Preview'
+
+
+@admin.register(VideoExclusionTable)
+class VideoExclusionTableAdmin(admin.ModelAdmin):
+    list_display = ['video_id', 'exclusion_reason_display', 'video_url_short', 'detected_at']
+    list_filter = ['exclusion_reason', 'detected_at']
+    search_fields = ['video_id', 'video_url']
+    readonly_fields = ['detected_at', 'video_id_clickable']
+    ordering = ['-detected_at']
+    
+    fieldsets = (
+        ('Video Information', {
+            'fields': ('video_id', 'video_id_clickable', 'video_url')
+        }),
+        ('Exclusion Details', {
+            'fields': ('exclusion_reason', 'detected_at')
+        }),
+    )
+    
+    def video_url_short(self, obj):
+        """Display shortened video URL for better list view"""
+        return f"{obj.video_url[:50]}..." if len(obj.video_url) > 50 else obj.video_url
+    video_url_short.short_description = 'Video URL'
+    
+    def exclusion_reason_display(self, obj):
+        """Display exclusion reason with nice formatting"""
+        return obj.get_exclusion_reason_display()
+    exclusion_reason_display.short_description = 'Exclusion Reason'
+    
+    def video_id_clickable(self, obj):
+        """Make video ID clickable to open YouTube in new tab"""
+        if obj.video_id:
+            youtube_url = f"https://www.youtube.com/watch?v={obj.video_id}"
+            return f'<a href="{youtube_url}" target="_blank">{obj.video_id}</a>'
+        return obj.video_id
+    video_id_clickable.short_description = 'Video ID (Clickable)'
+    video_id_clickable.allow_tags = True
+    
+    def get_queryset(self, request):
+        """Optimize queries for video exclusions"""
+        return super().get_queryset(request)
+    
+    # Add custom admin actions
+    actions = ['export_exclusion_analytics']
+    
+    def export_exclusion_analytics(self, request, queryset):
+        """Export exclusion analytics data"""
+        from django.http import HttpResponse
+        import csv
+        
+        response = HttpResponse(content_type='text/csv')
+        response['Content-Disposition'] = 'attachment; filename="video_exclusions.csv"'
+        
+        writer = csv.writer(response)
+        writer.writerow(['Video ID', 'Video URL', 'Exclusion Reason', 'Detected At'])
+        
+        for exclusion in queryset:
+            writer.writerow([
+                exclusion.video_id,
+                exclusion.video_url,
+                exclusion.get_exclusion_reason_display(),
+                exclusion.detected_at.strftime('%Y-%m-%d %H:%M:%S')
+            ])
+        
+        self.message_user(request, f"Exported {queryset.count()} exclusion records.")
+        return response
+    export_exclusion_analytics.short_description = "Export selected exclusions to CSV"
