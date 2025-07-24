@@ -32,6 +32,21 @@ class OpenAIConfig(BaseModel):
     max_retries: int = Field(default=3, description="Maximum retry attempts")
     user: Optional[str] = Field(None, description="User identifier for API requests")
 
+class GeminiConfig(BaseModel):
+    """Google Gemini configuration settings"""
+    api_key: str = Field(..., description="Google Gemini API key")
+    
+    # Model settings
+    model: str = Field(default="gemini-2.5-flash", description="Default Gemini model")
+    temperature: float = Field(default=0.7, ge=0.0, le=2.0, description="Default generation temperature")
+    max_tokens: Optional[int] = Field(default=4000, ge=1, description="Default max tokens for generation")
+    top_p: float = Field(default=1.0, ge=0.0, le=1.0, description="Default top-p sampling")
+    top_k: Optional[int] = Field(default=40, ge=1, description="Default top-k sampling")
+    
+    # API settings
+    timeout: int = Field(default=30, description="Request timeout in seconds")
+    max_retries: int = Field(default=3, description="Maximum retry attempts")
+
 class PineconeConfig(BaseModel):
     """Pinecone configuration settings"""
     api_key: str = Field(..., description="Pinecone API key")
@@ -52,6 +67,7 @@ class LlamaIndexConfig(BaseModel):
 class AIConfig(BaseModel):
     """Main AI configuration container"""
     openai: OpenAIConfig
+    gemini: GeminiConfig
     pinecone: PineconeConfig
     llamaindex: LlamaIndexConfig = Field(default_factory=LlamaIndexConfig)
     
@@ -81,6 +97,16 @@ class AIConfig(BaseModel):
                 max_retries=int(os.getenv("OPENAI_MAX_RETRIES", "3")),
                 user=os.getenv("OPENAI_USER")
             ),
+            gemini=GeminiConfig(
+                api_key=os.getenv("GOOGLE_API_KEY", ""),
+                model=os.getenv("GEMINI_MODEL", "gemini-2.5-flash"),
+                temperature=float(os.getenv("GEMINI_TEMPERATURE", "0.7")),
+                max_tokens=int(os.getenv("GEMINI_MAX_TOKENS", "4000")),
+                top_p=float(os.getenv("GEMINI_TOP_P", "1.0")),
+                top_k=int(os.getenv("GEMINI_TOP_K")) if os.getenv("GEMINI_TOP_K") else 40,
+                timeout=int(os.getenv("GEMINI_TIMEOUT", "30")),
+                max_retries=int(os.getenv("GEMINI_MAX_RETRIES", "3"))
+            ),
             pinecone=PineconeConfig(
                 api_key=os.getenv("PINECONE_API_KEY", ""),
                 environment=os.getenv("PINECONE_ENVIRONMENT", "aws-starter"),
@@ -106,6 +132,8 @@ class AIConfig(BaseModel):
         """Validate configuration and raise errors for missing required fields"""
         if not self.openai.api_key:
             raise ValueError("OPENAI_API_KEY is required")
+        if not self.gemini.api_key:
+            raise ValueError("GOOGLE_API_KEY is required for Gemini")
         if not self.pinecone.api_key:
             raise ValueError("PINECONE_API_KEY is required")
         if not self.pinecone.environment:

@@ -30,105 +30,52 @@ class QueryProcessor:
         self.system_prompt = self._build_system_prompt()
     
     def _build_system_prompt(self) -> str:
-        """Build the enhanced chain-of-thought system prompt for dependency analysis and query orchestration"""
-        from datetime import datetime
-        current_year = datetime.now().year
-        
-        return f"""You are an expert YouTube search orchestrator that uses chain-of-thought reasoning to analyze complex queries and generate optimized search queries with proper dependency ordering.
+        """Build a precision-engineered system prompt for Gemini query processing."""
+        return """You are a YouTube Search Query Optimizer. Transform user queries into optimized YouTube searches.
 
-CHAIN-OF-THOUGHT REASONING PROCESS:
+INTENT CLASSIFICATION (choose exactly ONE):
+• LOOKUP: Facts, definitions, "what is" questions, basic information
+• TUTORIAL: Step-by-step learning, complete courses, educational series  
+• HOW_TO: Specific problem-solving, fixes, troubleshooting, instructions
+• REVIEW: Product reviews, recommendations, comparisons, "best of" lists
 
-Step 1: DEPENDENCY ANALYSIS
-- Identify if concepts have prerequisite relationships (A must come before B)
-- Look for temporal indicators: "then", "after", "before", "first", "but don't know"
-- Determine logical order: basics → advanced, requirements → goals, problems → solutions
-- Flag knowledge gaps that need to be filled first
+CONCEPT EXTRACTION RULES:
+• Extract 2-3 SEARCHABLE keywords/phrases (NOT the entire query)
+• Think: "What would someone actually search on YouTube?"
+• Break complex queries into distinct, searchable topics
+• Focus on the most important searchable elements
 
-Step 2: CONCEPT EXPANSION & DOMAIN DETECTION
-- Break down broad concepts into specific, searchable topics
-- Identify the domain (tech, travel, health, business, science, creative, finance)
-- Preserve original context and user intent
-- Generate 2-4 related concepts that comprehensively cover the user's needs
+QUERY ENHANCEMENT RULES:
+• Create 2-3 different YouTube search variations
+• Add "english" to each query for language preference
+• Optimize for YouTube's search algorithm
+• Include relevant modifiers (year, type, location when relevant)
+• Make queries specific enough to find quality content
 
-Step 3: INTENT CLASSIFICATION
-🔍 LOOKUP - Definitions, basic information, "what is" questions
-📚 TUTORIAL - Step-by-step learning, complete processes
-🛠️ HOW_TO - Specific problem-solving, troubleshooting tasks  
-⭐ REVIEW - Comparisons, evaluations, "which is better"
-🗺️ GUIDE - Planning, strategies, comprehensive overviews
+RESPONSE FORMAT (JSON only, no explanations):
+{"intent": "INTENT_TYPE", "concepts": ["concept1", "concept2"], "enhanced_queries": ["query1 english", "query2 english"]}
 
-Step 4: QUERY OPTIMIZATION & ORDERING
-- Create specific, actionable YouTube search queries
-- Order queries by logical dependency (prerequisites FIRST, then advanced topics)
-- Use domain-appropriate keywords and skill-level indicators
-- ALWAYS include "english" for language preference
-- Ensure queries are specific enough to find quality content
+EXAMPLES:
 
-CRITICAL: Show your reasoning process, then provide the JSON.
+Query: "Best budget phones 2025"
+{"intent": "REVIEW", "concepts": ["budget smartphones", "phone reviews 2025"], "enhanced_queries": ["best budget phones 2025 review english", "affordable smartphones under 15000 comparison english"]}
 
-DETAILED EXAMPLES WITH REASONING:
+Query: "I have ₹20K budget. Which phone is best in India for gaming and battery life in July 2025?"
+{"intent": "REVIEW", "concepts": ["gaming phones under 20000", "battery life smartphones", "phones India 2025"], "enhanced_queries": ["best gaming phones under 20000 India english", "smartphones best battery life 2025 review english", "₹20000 budget phones gaming performance english"]}
 
-Example 1 - Complex Travel Query:
-Query: "I want to explore the US but I'm not sure where to begin and nor do I know how to apply for visa"
+Query: "Python tutorial for beginners"
+{"intent": "TUTORIAL", "concepts": ["Python programming", "beginner tutorial"], "enhanced_queries": ["Python tutorial complete beginner english", "learn Python programming basics course english"]}
 
-REASONING:
-- Domain: Travel planning
-- Dependencies: VISA (prerequisite) → TRAVEL PLANNING → DESTINATIONS
-- User gaps: visa process knowledge, travel basics, destination ideas  
-- Logical order: Can't travel without visa, so visa comes first
-- Intent: Comprehensive planning guide
+Query: "How to fix laptop not turning on"
+{"intent": "HOW_TO", "concepts": ["laptop repair", "troubleshooting"], "enhanced_queries": ["laptop not turning on fix english", "troubleshoot dead laptop repair english"]}
 
-→ {{"intent": "GUIDE", "concepts": ["US visa application process", "US travel planning basics", "best US destinations for tourists"], "enhanced_queries": ["how to apply for US tourist visa step by step english", "US travel planning guide first time international visitors english", "best places to visit in United States tourists english"]}}
+Query: "What is machine learning"
+{"intent": "LOOKUP", "concepts": ["machine learning basics", "AI explanation"], "enhanced_queries": ["machine learning explained simple english", "what is machine learning beginners english"]}
 
-Example 2 - Technology Dependency:
-Query: "learn React and deploy to production with CI/CD"
+Query: "Learn React but I don't know JavaScript"
+{"intent": "TUTORIAL", "concepts": ["JavaScript basics", "React tutorial", "web development"], "enhanced_queries": ["JavaScript fundamentals beginners english", "React tutorial no JavaScript experience english"]}
 
-REASONING:
-- Domain: Web development  
-- Dependencies: REACT BASICS → DEPLOYMENT → CI/CD
-- User needs: React fundamentals, deployment process, automation
-- Logical order: Must know React before deploying React apps
-- Intent: Complete learning path
-
-→ {{"intent": "TUTORIAL", "concepts": ["React fundamentals", "React deployment production", "CI/CD for React applications"], "enhanced_queries": ["React tutorial complete beginner javascript english", "deploy React app production hosting english", "CI/CD pipeline React applications english"]}}
-
-Example 3 - Health Prerequisites:
-Query: "diabetes diet and safe exercise but I'm newly diagnosed"
-
-REASONING:
-- Domain: Health management
-- Dependencies: DIABETES BASICS → DIET → EXERCISE
-- User gaps: newly diagnosed, needs foundational knowledge first
-- Logical order: Understanding condition → diet management → safe exercise
-- Intent: Comprehensive health management
-
-→ {{"intent": "GUIDE", "concepts": ["diabetes basics for beginners", "diabetes diet management", "safe exercise with diabetes"], "enhanced_queries": ["diabetes explained newly diagnosed english", "diabetes diet plan beginners english", "safe exercise routines diabetes patients english"]}}
-
-Example 4 - Business Sequence:
-Query: "startup idea validation and funding but haven't written business plan"
-
-REASONING:  
-- Domain: Business/entrepreneurship
-- Dependencies: IDEA VALIDATION → BUSINESS PLAN → FUNDING
-- User gaps: validation process, business plan creation, funding knowledge
-- Logical order: Validate first, then plan, then seek funding
-- Intent: Complete startup process
-
-→ {{"intent": "HOW_TO", "concepts": ["startup idea validation", "business plan creation", "startup funding options"], "enhanced_queries": ["how to validate startup idea market research english", "how to write business plan startups english", "startup funding options investors english"]}}
-
-FORMATTING REQUIREMENTS:
-- First show your REASONING process step by step
-- Then provide ONLY valid JSON on the last line
-- Use exactly these keys: "intent", "concepts", "enhanced_queries"
-- Order enhanced_queries by logical dependency (prerequisites first)
-- Ensure 2-4 concepts and 2-4 enhanced queries
-- Always include "english" in queries
-
-REQUIRED RESPONSE FORMAT:
-REASONING:
-[Your step-by-step analysis here]
-
-{{"intent": "INTENT_TYPE", "concepts": ["concept1", "concept2", "concept3"], "enhanced_queries": ["prerequisite query english", "main topic query english", "advanced query english"]}}"""
+IMPORTANT: Respond with ONLY the JSON object. No additional text or explanations."""
 
     async def enhance_query(
         self, 
@@ -164,7 +111,7 @@ REASONING:
             logger.debug(f"Using model: {chat_request.model}")
             
             # DEBUG: Log the system prompt being sent
-            logger.debug(f"SYSTEM PROMPT BEING SENT:\n{self.system_prompt}")
+            logger.debug(f"SYSTEM PROMPT BEING SENT:\n{chat_request.messages[0].content}")
             
             # DEBUG: Log the complete chat request details
             logger.debug(f"CHAT REQUEST DETAILS:")
@@ -235,25 +182,35 @@ REASONING:
                         logger.warning(f"Enhanced queries list is empty or invalid for input: {user_query}")
                         raise ValueError("Empty enhanced queries")
                     
-                    if not concepts or all(not c.strip() for c in concepts):
-                        logger.warning(f"Concepts list is empty or invalid for input: {user_query}")
-                        concepts = [user_query.strip()]
-                    
-                    # Validate intent type
-                    valid_intents = ["LOOKUP", "TUTORIAL", "REVIEW", "HOW_TO", "GUIDE"]
+                    # Validate intent type against database model choices
+                    valid_intents = ["LOOKUP", "TUTORIAL", "REVIEW", "HOW_TO"]  # Match database INTENT_CHOICES exactly
                     if intent_type not in valid_intents:
                         logger.warning(f"Invalid intent '{intent_type}' for query: {user_query}. Defaulting to LOOKUP")
                         intent_type = "LOOKUP"
                     
-                    # Clean and validate enhanced queries
+                    # Enhanced validation for concepts
+                    if not concepts or all(not c.strip() for c in concepts):
+                        logger.warning(f"Concepts list is empty or invalid for input: {user_query}")
+                        # Extract basic concepts as fallback
+                        concepts = self._extract_basic_concepts(user_query)
+                    
+                    # Enhanced validation for enhanced queries
                     enhanced_queries = [q.strip() for q in enhanced_queries if q.strip()]
                     if not enhanced_queries:
-                        raise ValueError("No valid enhanced queries after cleaning")
+                        logger.warning(f"Enhanced queries list is empty, creating fallback queries")
+                        enhanced_queries = self._create_fallback_queries(user_query)
+                    
+                    # Ensure queries are actually enhanced (not identical to original)
+                    original_lower = user_query.lower().strip()
+                    enhanced_queries = [q for q in enhanced_queries if q.lower().strip() != original_lower]
+                    if not enhanced_queries:
+                        logger.warning(f"All enhanced queries were identical to original, creating new ones")
+                        enhanced_queries = self._create_fallback_queries(user_query)
                     
                     # Determine if it's a complex query
                     is_complex = len(enhanced_queries) > 1
                     logger.debug(f"Query classified as {'complex' if is_complex else 'simple'}")
-                        
+                
                 except (json.JSONDecodeError, KeyError, ValueError) as e:
                     logger.error(f"JSON parse/validation error for query '{user_query}': {e}")
                     logger.error(f"Raw LLM response that failed to parse: {llm_response}")
@@ -346,63 +303,29 @@ REASONING:
         Returns:
             ChatRequest configured for query enhancement
         """
+        # Use simplified system prompt for Gemini
+        system_prompt = self._build_system_prompt()
+        max_tokens = 500  # Generous limit to avoid MAX_TOKENS while staying efficient
+        temperature = 0.3
+        
         messages = [
-            ChatMessage(role=ChatRole.SYSTEM, content=self.system_prompt),
+            ChatMessage(role=ChatRole.SYSTEM, content=system_prompt),
             ChatMessage(role=ChatRole.USER, content=user_query)
         ]
         
-        # Smart model selection based on query complexity
-        model = self._select_model_for_query(user_query)
+        # Use a single high-performance model for all queries
+        model = "gemini-2.5-flash"
         logger.debug(f"Selected model '{model}' for query: '{user_query}'")
         
         return ChatRequest(
             messages=messages,
             model=model,
-            temperature=0.3,  # Lower temperature for more consistent results
-            max_tokens=500,  # Increased for reasoning + complete JSON response
+            temperature=temperature,
+            max_tokens=max_tokens,
             top_p=0.9,
             frequency_penalty=0.0,
             presence_penalty=0.0
         )
-    
-    def _select_model_for_query(self, user_query: str) -> str:
-        """
-        Select the appropriate model based on query complexity and reliability
-        
-        Args:
-            user_query: The user query to analyze
-            
-        Returns:
-            Model name to use
-        """
-        query_lower = user_query.lower()
-        word_count = len(user_query.split())
-        
-        # Complex query indicators
-        has_multiple_concepts = any(connector in query_lower for connector in [" and ", " then ", " plus ", " with ", " or "])
-        has_comparison = " vs " in query_lower or "compare" in query_lower
-        has_progressive_learning = any(term in query_lower for term in ["basics then", "beginner to", "from scratch"])
-        is_architectural = any(term in query_lower for term in ["architecture", "best practices", "design patterns", "microservices"])
-        has_dependencies = any(indicator in query_lower for indicator in ["but don't know", "but not sure", "then", "after", "before"])
-        
-        # For complex dependency analysis, use GPT-4 for better reliability
-        if (has_dependencies or 
-            has_progressive_learning or
-            (has_multiple_concepts and word_count > 15)):
-            return "gpt-4o"  # More reliable for complex reasoning
-        
-        # Use o1-preview for very complex analytical queries
-        if (word_count > 20 or 
-            is_architectural or
-            (has_comparison and word_count > 12)):
-            return "o1-preview"
-        
-        # Use GPT-4 for medium complexity (better JSON consistency)
-        if (word_count > 10 or has_multiple_concepts):
-            return "gpt-4o"
-        
-        # Default to o1-mini for simple queries
-        return "o1-mini"
     
     def _intelligent_fallback_analysis(self, user_query: str) -> tuple[list[str], list[str], str, bool]:
         """
@@ -544,6 +467,98 @@ REASONING:
             enhanced += " english"
         
         return enhanced
+    
+    def _extract_basic_concepts(self, user_query: str) -> list[str]:
+        """
+        Extract basic concepts from user query using rule-based approach
+        
+        Args:
+            user_query: The user's original query
+            
+        Returns:
+            List of extracted concepts
+        """
+        import re
+        
+        query_lower = user_query.lower()
+        concepts = []
+        
+        # Remove common stop words but keep important ones
+        stop_words = {'the', 'a', 'an', 'and', 'or', 'but', 'in', 'on', 'at', 'to', 'for', 'of', 'with', 'by', 'is', 'are', 'was', 'were', 'be', 'been', 'being', 'have', 'has', 'had', 'do', 'does', 'did', 'will', 'would', 'could', 'should', 'may', 'might', 'can'}
+        
+        # Extract words, preserving important phrases
+        words = user_query.split()
+        
+        # Look for key product/topic words
+        tech_words = ['phone', 'laptop', 'computer', 'smartphone', 'tablet', 'camera', 'headphones']
+        action_words = ['learn', 'tutorial', 'guide', 'how', 'fix', 'repair', 'install', 'setup']
+        domain_words = ['programming', 'python', 'javascript', 'react', 'gaming', 'photography', 'cooking']
+        
+        # Extract meaningful phrases (2-3 word combinations)
+        for i in range(len(words)):
+            word = words[i].lower().strip('.,!?')
+            
+            # Skip stop words unless they're part of a larger phrase
+            if word in stop_words:
+                continue
+                
+            # Single important words
+            if word in tech_words + action_words + domain_words:
+                concepts.append(words[i])
+                
+            # Two-word phrases
+            if i < len(words) - 1:
+                phrase = f"{words[i]} {words[i+1]}"
+                phrase_clean = phrase.lower().strip('.,!?')
+                if any(keyword in phrase_clean for keyword in tech_words + domain_words):
+                    concepts.append(phrase)
+                    
+        # If no concepts found, use the first 2-3 meaningful words
+        if not concepts:
+            meaningful_words = [w for w in words if w.lower() not in stop_words and len(w) > 2]
+            concepts = meaningful_words[:2] if meaningful_words else [user_query]
+            
+        return concepts[:3]  # Limit to 3 concepts
+    
+    def _create_fallback_queries(self, user_query: str) -> list[str]:
+        """
+        Create fallback enhanced queries when LLM fails
+        
+        Args:
+            user_query: The user's original query
+            
+        Returns:
+            List of enhanced search queries
+        """
+        query_lower = user_query.lower()
+        enhanced_queries = []
+        
+        # Detect query type and create appropriate enhancements
+        if any(word in query_lower for word in ['best', 'review', 'compare', 'vs', 'which']):
+            # Review/comparison query
+            enhanced_queries.append(f"{user_query} review english")
+            enhanced_queries.append(f"{user_query} comparison 2025 english")
+            
+        elif any(word in query_lower for word in ['how', 'tutorial', 'learn', 'guide']):
+            # Tutorial/how-to query
+            enhanced_queries.append(f"{user_query} tutorial english")
+            enhanced_queries.append(f"{user_query} step by step english")
+            
+        elif any(word in query_lower for word in ['what', 'explain', 'definition']):
+            # Lookup/explanation query
+            enhanced_queries.append(f"{user_query} explained english")
+            enhanced_queries.append(f"{user_query} beginners english")
+            
+        else:
+            # Generic enhancement
+            enhanced_queries.append(f"{user_query} english")
+            enhanced_queries.append(f"{user_query} guide english")
+            
+        # Ensure we have at least one query
+        if not enhanced_queries:
+            enhanced_queries = [f"{user_query} english"]
+            
+        return enhanced_queries
     
     def _extract_json_from_response(self, response: str) -> str:
         """

@@ -1,14 +1,16 @@
 """
-AI Utils Providers Package
-Contains concrete implementations of abstract provider interfaces
+AI Providers
+Concrete implementations of AI service interfaces
 """
 
+from .openai_llm import OpenAILLMProvider
+from .gemini_llm import GeminiLLMProvider
 from .openai_embeddings import OpenAIEmbeddingProvider
 from .pinecone_store import PineconeVectorStoreProvider
-from .openai_llm import OpenAILLMProvider
 
 __all__ = [
-    "OpenAIEmbeddingProvider",
-    "PineconeVectorStoreProvider",
-    "OpenAILLMProvider"
+    'OpenAILLMProvider',
+    'GeminiLLMProvider', 
+    'OpenAIEmbeddingProvider',
+    'PineconeVectorStoreProvider'
 ] 

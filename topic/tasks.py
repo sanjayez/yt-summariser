@@ -3,21 +3,27 @@ Celery Tasks for Topic Search Processing
 Handles asynchronous YouTube search and AI processing operations
 """
 
-import logging
 import asyncio
-from celery import shared_task
-from celery.exceptions import SoftTimeLimitExceeded
-from django.db import transaction
+import logging
+from datetime import datetime, timedelta
 
+from django.db import transaction
+from celery import shared_task
+from celery.exceptions import Retry, SoftTimeLimitExceeded
+
+from .models import SearchRequest as SearchRequestModel
+from .utils.session_utils import get_or_create_session, update_session_status
+from .services.search_service import SearchRequest
 from ai_utils.config import get_config
-from ai_utils.providers.openai_llm import OpenAILLMProvider
 from ai_utils.services.llm_service import LLMService
-from topic.services.query_processor import QueryProcessor
-from topic.services.search_service import YouTubeSearchService, SearchRequest
-from topic.services.providers.scrapetube_provider import ScrapeTubeProvider
-from topic.utils.session_utils import update_session_status
-from topic.models import SearchRequest as SearchRequestModel, SearchSession
-from video_processor.config import YOUTUBE_CONFIG, BUSINESS_LOGIC_CONFIG
+from ai_utils.providers.gemini_llm import GeminiLLMProvider
+from .services.search_service import YouTubeSearchService
+from .services.providers.scrapetube_provider import ScrapeTubeProvider
+from .services.query_processor import QueryProcessor
+from video_processor.config import (
+    YOUTUBE_CONFIG,
+    BUSINESS_LOGIC_CONFIG
+)
 from video_processor.utils import handle_dead_letter_task
 
 logger = logging.getLogger(__name__)
@@ -78,7 +84,8 @@ def process_search_query(self, search_id: str, max_videos: int = 5):
             config = get_config()
             config.validate()
             
-            llm_provider = OpenAILLMProvider(config=config)
+            # Use Gemini LLM provider for query processing
+            llm_provider = GeminiLLMProvider(config=config)
             llm_service = LLMService(provider=llm_provider)
 
             # get clients for LLM and YouTube search
@@ -95,7 +102,7 @@ def process_search_query(self, search_id: str, max_videos: int = 5):
             )
             youtube_search_service = YouTubeSearchService(youtube_search_provider)
             
-            logger.debug("AI services initialized successfully")
+            logger.debug("AI services initialized with Gemini LLM provider")
             
         except Exception as e:
             error_msg = f"Failed to initialize AI services: {str(e)}"
@@ -186,16 +193,22 @@ def process_search_query(self, search_id: str, max_videos: int = 5):
                 logger.info("Using original query due to enhancement failure")
             intent_type = ""
         
-        # Perform YouTube search for all enhanced queries
+        # Perform YouTube search for all enhanced queries (PARALLEL EXECUTION)
         try:
             all_video_urls = []
             seen_urls = set()  # For deduplication
             
-            # Execute searches for each enhanced query
-            for idx, query in enumerate(enhanced_queries):
-                logger.debug(f"Starting YouTube search {idx+1}/{len(enhanced_queries)} for: '{query}'")
-                
+            # Use ThreadPoolExecutor for parallel execution of synchronous YouTube searches
+            import concurrent.futures
+            
+            logger.info(f"🚀 Starting {len(enhanced_queries)} YouTube searches in PARALLEL (instead of sequential)")
+            
+            def execute_search(query_info):
+                """Execute a single YouTube search"""
+                query, search_idx = query_info
                 try:
+                    logger.debug(f"Starting parallel YouTube search {search_idx+1}/{len(enhanced_queries)} for: '{query}'")
+                    
                     search_request_obj = SearchRequest(
                         query=query,
                         max_results=max_videos
@@ -204,25 +217,40 @@ def process_search_query(self, search_id: str, max_videos: int = 5):
                     search_response = youtube_search_service.search(search_request_obj)
                     query_video_urls = search_response.results
                     
-                    logger.info(f"Found {len(query_video_urls)} videos for query: '{query}'")
-                    
-                    # Add unique URLs to the combined result
-                    for url in query_video_urls:
-                        if url not in seen_urls:
-                            seen_urls.add(url)
-                            all_video_urls.append(url)
+                    logger.info(f"Parallel search {search_idx+1} completed: Found {len(query_video_urls)} videos for '{query}'")
+                    return query_video_urls
                     
                 except Exception as e:
-                    logger.error(f"Search failed for query '{query}': {str(e)}")
-                    # Continue with other queries even if one fails
-                    continue
+                    logger.error(f"Parallel search failed for query '{query}': {str(e)}")
+                    return []
+            
+            with concurrent.futures.ThreadPoolExecutor(max_workers=min(len(enhanced_queries), 5)) as executor:
+                # Prepare query info for parallel execution
+                query_tasks = [(query, i) for i, query in enumerate(enhanced_queries)]
+                
+                # Submit all search tasks and collect results
+                future_to_query = {executor.submit(execute_search, task): task for task in query_tasks}
+                
+                # Collect results as they complete
+                for future in concurrent.futures.as_completed(future_to_query, timeout=30):
+                    try:
+                        query_video_urls = future.result()
+                        
+                        # Add unique URLs to the combined result
+                        for url in query_video_urls:
+                            if url not in seen_urls:
+                                seen_urls.add(url)
+                                all_video_urls.append(url)
+                                
+                    except Exception as e:
+                        logger.error(f"Failed to get result from parallel search: {str(e)}")
             
             video_urls = all_video_urls
-            logger.info(f"Total unique videos found across all queries: {len(video_urls)}")
+            logger.info(f"✅ Parallel search completed! Total unique videos found: {len(video_urls)}")
             
             if not video_urls:
                 logger.warning(f"No videos found for any of the enhanced queries")
-                
+            
         except Exception as e:
             error_msg = f"YouTube search failed: {str(e)}"
             logger.error(error_msg)
@@ -417,7 +445,7 @@ def _update_search_request_error(search_request: SearchRequestModel, error_messa
         logger.error(f"Failed to update search request with error: {e}")
 
 
-def _update_session_error(session: SearchSession):
+def _update_session_error(session: SearchRequestModel.search_session):
     """Helper function to update session with error status"""
     try:
         update_session_status(session, 'failed')

@@ -229,15 +229,32 @@ class LLMService:
             }
             
         except Exception as e:
-            logger.error(f"Error in chat completion: {str(e)}")
+            error_message = str(e)
+            
+            # Update job status
             job.status = ProcessingStatus.FAILED
-            job.error_message = str(e)
+            job.error_message = error_message
             job.updated_at = datetime.now()
+            
+            # Special handling for MAX_TOKENS error - don't retry, fall back immediately
+            if "MAX_TOKENS" in error_message:
+                logger.warning(f"MAX_TOKENS error encountered for job {job_id}, using fallback instead of retry")
+                return {
+                    "job_id": job_id,
+                    "status": "failed",
+                    "error": f"MAX_TOKENS: {error_message}",
+                    "processing_time_ms": 0,
+                    "response": None
+                }
+            
+            logger.error(f"Error in LLM service chat completion for job {job_id}: {error_message}")
             
             return {
                 "job_id": job_id,
-                "status": "failed",
-                "error": str(e)
+                "status": "failed", 
+                "error": error_message,
+                "processing_time_ms": 0,
+                "response": None
             }
     
     async def batch_text_generation(
