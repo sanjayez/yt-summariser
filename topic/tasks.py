@@ -115,53 +115,113 @@ def process_search_query(self, search_id: str, max_videos: int = 5):
         try:
             logger.debug("Starting LLM query processing")
             
-            # Create event loop if none exists
+            # Create a new event loop for Celery task
+            # This is safer than trying to get existing loop
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            
             try:
-                loop = asyncio.get_event_loop()
-            except RuntimeError:
-                asyncio.set_event_loop(asyncio.new_event_loop())
-                loop = asyncio.get_event_loop()
+                # Process query asynchronously with timeout
+                # Use asyncio.wait_for to add a timeout
+                enhancement_task = query_processor.enhance_query(original_query)
+                enhancement_result = loop.run_until_complete(
+                    asyncio.wait_for(enhancement_task, timeout=10.0)  # 10 second timeout
+                )
+            except asyncio.TimeoutError:
+                logger.error(f"LLM query enhancement timed out after 10 seconds for query: '{original_query}'")
+                # Use smart fallback on timeout
+                if " and " in original_query.lower():
+                    parts = original_query.lower().split(" and ")
+                    concepts = [part.strip() for part in parts if part.strip()]
+                    enhanced_queries = [f"{concept} tutorial english" for concept in concepts]
+                    is_complex = True
+                else:
+                    concepts = [original_query]
+                    enhanced_queries = [original_query]
+                    is_complex = False
+                enhancement_result = {
+                    "status": "failed",
+                    "error": "Timeout",
+                    "concepts": concepts,
+                    "enhanced_queries": enhanced_queries,
+                    "intent_type": "",
+                    "is_complex": is_complex
+                }
+            finally:
+                # Clean up the loop
+                loop.close()
             
-            # Process query asynchronously - use enhance_query method
-            enhancement_result = loop.run_until_complete(
-                query_processor.enhance_query(original_query)
-            )
-            
-            # Extract enhanced query and intent from result
+            # Extract enhanced queries, concepts and intent from result
             if enhancement_result.get("status") == "completed":
-                processed_query = enhancement_result.get("enhanced_query", original_query)
+                enhanced_queries = enhancement_result.get("enhanced_queries", [original_query])
+                concepts = enhancement_result.get("concepts", [original_query])
                 intent_type = enhancement_result.get("intent_type", "")
-                logger.info(f"Enhanced query: '{original_query}' → '{processed_query}' (Intent: {intent_type})")
+                is_complex = enhancement_result.get("is_complex", False)
+                
+                logger.info(f"Enhanced query: '{original_query}' → {len(enhanced_queries)} queries (Intent: {intent_type}, Complex: {is_complex})")
+                logger.debug(f"Concepts: {concepts}")
+                logger.debug(f"Enhanced queries: {enhanced_queries}")
             else:
-                processed_query = original_query
+                enhanced_queries = [original_query]
+                concepts = [original_query]
                 intent_type = ""
+                is_complex = False
                 logger.warning(f"Query enhancement failed: {enhancement_result.get('error', 'Unknown error')}, using original query")
             
         except Exception as e:
             error_msg = f"Query enhancement failed: {str(e)}"
-            logger.error(error_msg)
+            logger.error(error_msg, exc_info=True)  # Add full traceback
             
-            # Use original query if enhancement fails
-            processed_query = original_query
+            # Better fallback handling
+            if " and " in original_query.lower():
+                parts = original_query.lower().split(" and ")
+                concepts = [part.strip() for part in parts if part.strip()]
+                enhanced_queries = [f"{concept} tutorial english" for concept in concepts]
+                is_complex = True
+                logger.info(f"Using smart fallback: extracted {len(concepts)} concepts")
+            else:
+                enhanced_queries = [original_query]
+                concepts = [original_query]
+                is_complex = False
+                logger.info("Using original query due to enhancement failure")
             intent_type = ""
-            logger.info("Using original query due to enhancement failure")
         
-        # Perform YouTube search
+        # Perform YouTube search for all enhanced queries
         try:
-            logger.debug(f"Starting YouTube search for: '{processed_query}'")
+            all_video_urls = []
+            seen_urls = set()  # For deduplication
             
-            search_request_obj = SearchRequest(
-                query=processed_query,
-                max_results=max_videos
-            )
+            # Execute searches for each enhanced query
+            for idx, query in enumerate(enhanced_queries):
+                logger.debug(f"Starting YouTube search {idx+1}/{len(enhanced_queries)} for: '{query}'")
+                
+                try:
+                    search_request_obj = SearchRequest(
+                        query=query,
+                        max_results=max_videos
+                    )
+                    
+                    search_response = youtube_search_service.search(search_request_obj)
+                    query_video_urls = search_response.results
+                    
+                    logger.info(f"Found {len(query_video_urls)} videos for query: '{query}'")
+                    
+                    # Add unique URLs to the combined result
+                    for url in query_video_urls:
+                        if url not in seen_urls:
+                            seen_urls.add(url)
+                            all_video_urls.append(url)
+                    
+                except Exception as e:
+                    logger.error(f"Search failed for query '{query}': {str(e)}")
+                    # Continue with other queries even if one fails
+                    continue
             
-            search_response = youtube_search_service.search(search_request_obj)
-            video_urls = search_response.results
-            
-            logger.info(f"Found {len(video_urls)} videos for query: '{processed_query}'")
+            video_urls = all_video_urls
+            logger.info(f"Total unique videos found across all queries: {len(video_urls)}")
             
             if not video_urls:
-                logger.warning(f"No videos found for query: '{processed_query}'")
+                logger.warning(f"No videos found for any of the enhanced queries")
                 
         except Exception as e:
             error_msg = f"YouTube search failed: {str(e)}"
@@ -179,13 +239,24 @@ def process_search_query(self, search_id: str, max_videos: int = 5):
         
         # Update database with results
         try:
+            logger.info(f"About to save to database:")
+            logger.info(f"  - concepts type: {type(concepts)}, value: {concepts}")
+            logger.info(f"  - enhanced_queries type: {type(enhanced_queries)}, value: {enhanced_queries}")
+            logger.info(f"  - intent_type: {intent_type}")
+            logger.info(f"  - video_urls count: {len(video_urls)}")
+            
             with transaction.atomic():
-                search_request.processed_query = processed_query
+                search_request.concepts = concepts
+                search_request.enhanced_queries = enhanced_queries
                 search_request.intent_type = intent_type
                 search_request.video_urls = video_urls
                 search_request.total_videos = len(video_urls)
                 search_request.status = 'success'
                 search_request.save()
+                
+                # Verify what was saved
+                search_request.refresh_from_db()
+                logger.info(f"After save - concepts from DB: {search_request.concepts}")
                 
                 # Update session status to success
                 update_session_status(session, 'success')
@@ -212,7 +283,8 @@ def process_search_query(self, search_id: str, max_videos: int = 5):
             'search_id': search_id,
             'session_id': str(session.session_id),
             'original_query': original_query,
-            'processed_query': processed_query,
+            'concepts': concepts,
+            'enhanced_queries': enhanced_queries,
             'video_urls': video_urls,
             'total_videos': len(video_urls)
         }

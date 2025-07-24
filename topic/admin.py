@@ -21,9 +21,9 @@ class SearchSessionAdmin(admin.ModelAdmin):
 
 @admin.register(SearchRequest)
 class SearchRequestAdmin(admin.ModelAdmin):
-    list_display = ['search_id_short', 'session_short', 'original_query_preview', 'processed_query_preview', 'intent_type', 'total_videos', 'status', 'created_at']
+    list_display = ['search_id_short', 'session_short', 'original_query_preview', 'concepts_preview', 'intent_type', 'total_videos', 'status', 'created_at']
     list_filter = ['status', 'intent_type', 'created_at', 'search_session__user_ip', 'total_videos']
-    search_fields = ['search_id', 'original_query', 'processed_query', 'search_session__session_id']
+    search_fields = ['search_id', 'original_query', 'search_session__session_id']
     readonly_fields = ['search_id', 'created_at']
     ordering = ['-created_at']
     
@@ -32,7 +32,7 @@ class SearchRequestAdmin(admin.ModelAdmin):
             'fields': ('search_id', 'search_session', 'status', 'created_at')
         }),
         ('Search Queries', {
-            'fields': ('original_query', 'processed_query', 'intent_type')
+            'fields': ('original_query', 'concepts', 'enhanced_queries', 'intent_type')
         }),
         ('Results', {
             'fields': ('video_urls', 'total_videos')
@@ -55,8 +55,11 @@ class SearchRequestAdmin(admin.ModelAdmin):
         return obj.original_query[:50] + "..." if len(obj.original_query) > 50 else obj.original_query
     original_query_preview.short_description = 'Original Query'
     
-    def processed_query_preview(self, obj):
-        if not obj.processed_query:
+    def concepts_preview(self, obj):
+        if not obj.concepts:
             return 'N/A'
-        return obj.processed_query[:50] + "..." if len(obj.processed_query) > 50 else obj.processed_query
-    processed_query_preview.short_description = 'Processed Query'
+        concepts_str = ', '.join(obj.concepts[:3])  # Show first 3 concepts
+        if len(obj.concepts) > 3:
+            concepts_str += f' (+{len(obj.concepts) - 3} more)'
+        return concepts_str
+    concepts_preview.short_description = 'Concepts'

@@ -28,18 +28,40 @@ def extract_text_samples(transcript_text: str) -> str:
     config = LANGUAGE_DETECTION_CONFIG['sample_extraction']
     text_len = len(transcript_text)
     
-    # Extract small sample from beginning
-    beginning = transcript_text[:config['beginning_chars']].strip()
-    
-    # For longer texts, also extract middle and end samples
-    if text_len > config['beginning_chars'] * 2:
-        # Middle sample
-        middle_start = text_len // 2 - config['middle_chars'] // 2
-        middle_end = middle_start + config['middle_chars']
+    # Extract meaningful samples that preserve word boundaries
+    # Use larger samples to get coherent text for accurate language detection
+    beginning_chars = max(200, config['beginning_chars'] * 6)  # 200+ chars instead of 30
+    beginning_end = min(beginning_chars, len(transcript_text))
+
+    # Find word boundary for beginning sample
+    while beginning_end < len(transcript_text) and beginning_end > 0 and transcript_text[beginning_end] not in ' \n\t':
+        beginning_end += 1
+
+    beginning = transcript_text[:beginning_end].strip()
+
+    # For longer texts, also extract middle and end samples with word boundaries
+    if text_len > beginning_chars * 2:
+        # Middle sample with word boundaries
+        middle_chars = max(150, config['middle_chars'] * 4)  # Larger middle sample
+        middle_start = text_len // 2 - middle_chars // 2
+        middle_end = middle_start + middle_chars
+        
+        # Adjust to word boundaries
+        while middle_start > 0 and transcript_text[middle_start] not in ' \n\t':
+            middle_start -= 1
+        while middle_end < len(transcript_text) and transcript_text[middle_end] not in ' \n\t':
+            middle_end += 1
+        
         middle = transcript_text[middle_start:middle_end].strip()
         
-        # End sample
-        end_start = max(text_len - config['end_chars'], middle_end + 10)
+        # End sample with word boundaries
+        end_chars = max(150, config['end_chars'] * 4)  # Larger end sample
+        end_start = max(text_len - end_chars, middle_end + 10)
+        
+        # Adjust to word boundary
+        while end_start > 0 and transcript_text[end_start] not in ' \n\t':
+            end_start -= 1
+        
         end = transcript_text[end_start:].strip()
         
         # Combine samples with spaces
@@ -87,10 +109,18 @@ def detect_transcript_language(transcript_text: str) -> Tuple[bool, float]:
         language = result.get('lang', '')
         confidence = result.get('score', 0.0)
         
-        # Check if English and meets confidence threshold
+        # Use adaptive confidence threshold based on sample quality
+        threshold = BUSINESS_LOGIC_CONFIG['LANGUAGE_DETECTION']['confidence_threshold']
+        
+        # Lower threshold for longer, more representative samples
+        if len(sample_text) > 200:
+            effective_threshold = max(0.4, threshold - 0.2)
+        else:
+            effective_threshold = threshold
+            
         is_english = (
             language == 'en' and 
-            confidence >= BUSINESS_LOGIC_CONFIG['LANGUAGE_DETECTION']['confidence_threshold']
+            confidence >= effective_threshold
         )
         
         logger.info(

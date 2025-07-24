@@ -189,7 +189,9 @@ class OpenAILLMProvider(LLMProvider):
             "gpt-3.5-turbo-1106",
             "gpt-3.5-turbo-16k",
             "gpt-3.5-turbo-0613",
-            "gpt-3.5-turbo-16k-0613"
+            "gpt-3.5-turbo-16k-0613",
+            "o1-preview",
+            "o1-mini"
         ]
     
     async def health_check(self) -> bool:
@@ -225,26 +227,62 @@ class OpenAILLMProvider(LLMProvider):
     ) -> ChatResponse:
         """Internal method for chat completions"""
         
-        # Prepare OpenAI API call parameters
-        params = {
-            "model": model or self.default_model,
-            "messages": [{"role": msg.role.value, "content": msg.content} for msg in messages],
-            "temperature": temperature if temperature is not None else self.default_temperature,
-            "top_p": top_p if top_p is not None else self.default_top_p,
-            "frequency_penalty": frequency_penalty if frequency_penalty is not None else self.default_frequency_penalty,
-            "presence_penalty": presence_penalty if presence_penalty is not None else self.default_presence_penalty,
-            "stream": stream,
-            "user": user or self.default_user
-        }
+        model_name = model or self.default_model
         
-        # Add optional parameters
-        if max_tokens is not None:
-            params["max_tokens"] = max_tokens
-        elif self.default_max_tokens is not None:
-            params["max_tokens"] = self.default_max_tokens
+        # Handle O1 model limitations
+        if model_name.startswith("o1"):
+            # O1 models don't support system messages - merge system content into user message
+            filtered_messages = []
+            system_content = ""
             
-        if stop is not None:
-            params["stop"] = stop
+            for msg in messages:
+                if msg.role == ChatRole.SYSTEM:
+                    system_content += msg.content + "\n\n"
+                else:
+                    if system_content and msg.role == ChatRole.USER:
+                        # Prepend system content to first user message
+                        filtered_messages.append({
+                            "role": msg.role.value, 
+                            "content": system_content + msg.content
+                        })
+                        system_content = ""  # Only add once
+                    else:
+                        filtered_messages.append({
+                            "role": msg.role.value, 
+                            "content": msg.content
+                        })
+            
+            # O1 models have limited parameter support
+            params = {
+                "model": model_name,
+                "messages": filtered_messages
+            }
+            
+            # Only add max_completion_tokens for o1 models if specified
+            if max_tokens is not None:
+                params["max_completion_tokens"] = max_tokens
+                
+        else:
+            # Standard models support all parameters
+            params = {
+                "model": model_name,
+                "messages": [{"role": msg.role.value, "content": msg.content} for msg in messages],
+                "temperature": temperature if temperature is not None else self.default_temperature,
+                "top_p": top_p if top_p is not None else self.default_top_p,
+                "frequency_penalty": frequency_penalty if frequency_penalty is not None else self.default_frequency_penalty,
+                "presence_penalty": presence_penalty if presence_penalty is not None else self.default_presence_penalty,
+                "stream": stream,
+                "user": user or self.default_user
+            }
+            
+            # Add optional parameters for standard models
+            if max_tokens is not None:
+                params["max_tokens"] = max_tokens
+            elif self.default_max_tokens is not None:
+                params["max_tokens"] = self.default_max_tokens
+                
+            if stop is not None:
+                params["stop"] = stop
         
         # Make API call
         response = await self.client.chat.completions.create(**params)

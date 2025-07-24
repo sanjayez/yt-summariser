@@ -56,3 +56,8 @@ Thumbs.db
 #config md
 CLAUDE.md
 SEARCH_IMPLEMENTATION_ROADMAP.md
+
+
+*.md
+
+nextstep.txt

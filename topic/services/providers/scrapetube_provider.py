@@ -189,6 +189,65 @@ class ScrapeTubeProvider:
                 return False
         
         return True
+    
+    def _enhance_search_query(self, query: str) -> str:
+        """
+        Enhance search query for better YouTube results
+        
+        Args:
+            query: Original search query
+            
+        Returns:
+            Enhanced query with better search terms
+        """
+        # Simple enhancement - remove redundant words and normalize spacing
+        enhanced = query.strip()
+        
+        # Remove redundant words that might confuse search
+        enhanced = enhanced.replace('  ', ' ').strip()
+        
+        if enhanced != query:
+            logger.debug(f"Enhanced query: '{query}' -> '{enhanced}'")
+        
+        return enhanced
+    
+    def _is_relevant_to_query(self, title: str, query: str) -> bool:
+        """
+        Check if video title is relevant to the search query
+        
+        Args:
+            title: Video title
+            query: Search query
+            
+        Returns:
+            True if title appears relevant to query
+        """
+        # Rely on YouTube's algorithm for relevance - our enhanced queries should be sufficient
+        # Only do basic sanity checks
+        if not title or not query:
+            return True
+        
+        # Very basic relevance check - just ensure it's not completely unrelated
+        # This removes the hardcoded domain-specific logic
+        title_lower = title.lower()
+        query_lower = query.lower()
+        
+        # Extract meaningful words from query (remove common stop words)
+        stop_words = {'a', 'an', 'and', 'are', 'as', 'at', 'be', 'by', 'for', 'from', 
+                     'has', 'he', 'in', 'is', 'it', 'its', 'of', 'on', 'that', 'the', 
+                     'to', 'was', 'will', 'with', 'english', 'tutorial', 'guide', 
+                     '2024', '2025', 'how', 'what', 'why', 'when', 'where'}
+        
+        query_words = [word for word in query_lower.split() if word not in stop_words and len(word) > 2]
+        
+        # Check if at least one meaningful word from query appears in title
+        if query_words:
+            has_match = any(word in title_lower for word in query_words)
+            if not has_match:
+                logger.debug(f"No keyword match for title: {title}")
+                return False
+        
+        return True
         
     def search(self, query: str, max_results: Optional[int] = None) -> List[str]:
         """
@@ -220,14 +279,41 @@ class ScrapeTubeProvider:
             batch_size = 20  # Fetch in batches
             max_total_fetch = 100  # Don't fetch more than 100 total to avoid infinite loops
             
-            # Use scrapetube to search YouTube - it returns a generator
-            videos = scrapetube.get_search(
-                query=query,
-                limit=max_total_fetch,  # Set high limit, we'll break when we have enough
-                sleep=1,  # Add delay between requests to be respectful
-                sort_by='relevance',
-                results_type='video'  # Only videos, not channels/playlists
-            )
+            # Try multiple search strategies for better results
+            all_videos = []
+            
+            # Strategy 1: Original query with relevance sorting
+            try:
+                videos_relevance = scrapetube.get_search(
+                    query=query,
+                    limit=max_total_fetch // 2,
+                    sleep=1,
+                    sort_by='relevance',
+                    results_type='video'
+                )
+                all_videos.extend(list(videos_relevance))
+            except Exception as e:
+                logger.warning(f"Relevance search failed: {e}")
+            
+            # Strategy 2: Query with view count sorting for popular content
+            if len(all_videos) < results_limit * 2:
+                try:
+                    videos_views = scrapetube.get_search(
+                        query=query,
+                        limit=max_total_fetch // 2,
+                        sleep=1,
+                        sort_by='view_count',
+                        results_type='video'
+                    )
+                    # Add unique videos only
+                    existing_ids = {v.get('videoId') for v in all_videos if v.get('videoId')}
+                    for video in videos_views:
+                        if video.get('videoId') and video.get('videoId') not in existing_ids:
+                            all_videos.append(video)
+                except Exception as e:
+                    logger.warning(f"View count search failed: {e}")
+            
+            videos = iter(all_videos)
             
             # Process the results iteratively
             for video in videos:

@@ -43,12 +43,13 @@ class SearchRequest(models.Model):
     search_id = models.UUIDField(default=uuid.uuid4, editable=False, unique=True)
     search_session = models.ForeignKey(SearchSession, on_delete=models.CASCADE, related_name='search_requests')
     original_query = models.TextField(help_text="User's original query")
-    processed_query = models.TextField(blank=True, help_text="LLM-enhanced query for YouTube search")
+    concepts = models.JSONField(default=list, blank=True, help_text="List of concepts identified by LLM from the user query")
+    enhanced_queries = models.JSONField(default=list, blank=True, help_text="List of LLM-generated enhanced queries for search execution")
     intent_type = models.CharField(
         max_length=20, 
         choices=INTENT_CHOICES, 
         blank=True,
-        help_text="Classified intent of the user query"
+        help_text="Primary intent of the user query"
     )
     video_urls = models.JSONField(default=list, blank=True, help_text="List of YouTube video URLs found")
     total_videos = models.IntegerField(default=0)
