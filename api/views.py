@@ -171,13 +171,19 @@ async def search_video_content_async(question: str, video_metadata, transcript) 
     """
     try:
         from ai_utils.services.vector_service import VectorService
+        from ai_utils.services.embedding_service import EmbeddingService
         from ai_utils.providers.openai_llm import OpenAILLMProvider
+        from ai_utils.providers.pinecone_store import PineconeVectorStoreProvider
+        from ai_utils.providers.openai_embeddings import OpenAIEmbeddingProvider
         from ai_utils.services.llm_service import LLMService
         from ai_utils.models import VectorQuery, ChatMessage, ChatRequest
-        from ai_utils.config import AIConfig
+        from ai_utils.config import get_config
         
-        vector_service = VectorService()
-        config = AIConfig()
+        config = get_config()
+        embedding_provider = OpenAIEmbeddingProvider(config)
+        embedding_service = EmbeddingService(provider=embedding_provider)
+        vector_provider = PineconeVectorStoreProvider(config)
+        vector_service = VectorService(provider=vector_provider)
         llm_provider = OpenAILLMProvider(config=config)
         llm_service = LLMService(provider=llm_provider)
         video_id = video_metadata.video_id
@@ -185,47 +191,36 @@ async def search_video_content_async(question: str, video_metadata, transcript) 
         all_sources = []
         search_results = []
         
-        # Strategy 1: Search metadata and summary first
+        # Search video segments (the main content that's embedded)
         try:
-            metadata_query = VectorQuery(
+            logger.info(f"🔍 Starting vector search for video {video_id} with question: '{question}'")
+            
+            segments_results = await vector_service.search_by_text(
                 text=question,
-                top_k=2,
-                filter={'video_id': video_id, 'type': {'$in': ['metadata', 'summary']}}
+                embedding_service=embedding_service,
+                top_k=5,
+                filters={'video_id': video_id, 'type': 'segment'}
             )
             
-            metadata_results = await vector_service.search(metadata_query)
-            if metadata_results and metadata_results.results:
-                for result in metadata_results.results:
-                    search_results.append({
-                        'type': result.metadata.get('type', 'unknown'),
-                        'text': result.text,
-                        'score': result.score,
-                        'metadata': result.metadata
-                    })
-                    
-        except Exception as e:
-            logger.warning(f"Metadata/summary search failed: {e}")
-        
-        # Strategy 2: Search segments for specific details
-        try:
-            segments_query = VectorQuery(
-                text=question,
-                top_k=3,
-                filter={'video_id': video_id, 'type': 'segment'}
-            )
+            logger.info(f"🔍 Vector search completed. Results: {len(segments_results.results) if segments_results else 0}")
             
-            segments_results = await vector_service.search(segments_query)
             if segments_results and segments_results.results:
-                for result in segments_results.results:
+                logger.info(f"🔍 Processing {len(segments_results.results)} results")
+                for i, result in enumerate(segments_results.results):
+                    logger.info(f"🔍 Result {i+1}: score={result.score:.4f}, text='{result.text[:50]}...'")
                     search_results.append({
                         'type': 'segment',
                         'text': result.text,
                         'score': result.score,
                         'metadata': result.metadata
                     })
+            else:
+                logger.warning(f"🔍 No vector search results found for video {video_id}")
                     
         except Exception as e:
-            logger.warning(f"Segments search failed: {e}")
+            logger.error(f"🔍 Segments search failed: {e}")
+            import traceback
+            logger.error(f"🔍 Full traceback: {traceback.format_exc()}")
         
         # Sort by relevance score and take top 3
         search_results.sort(key=lambda x: x['score'], reverse=True)

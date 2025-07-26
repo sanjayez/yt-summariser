@@ -10,6 +10,7 @@ from .metadata import extract_video_metadata
 from .transcript import extract_video_transcript
 from .summary import generate_video_summary
 from .content_classifier import classify_and_exclude_video_llm
+from .embedding import embed_video_content
 from .status import update_overall_status
 
 logger = logging.getLogger(__name__)
@@ -55,12 +56,13 @@ def process_youtube_video(self, url_request_id):
         logger.info(f"Starting video processing pipeline for request {url_request_id}")
         
         # Execute workflow chain: each task receives previous result as first argument
-        # Note: Embedding removed - will be handled by separate filtering layer
+        # Full pipeline: metadata → transcript → summary → classification → embedding → status
         workflow = chain(
             extract_video_metadata.s(url_request_id),
             extract_video_transcript.s(url_request_id),  # Pass url_request_id explicitly to ensure continuity
             generate_video_summary.s(url_request_id),    # Pass url_request_id explicitly to ensure continuity
             classify_and_exclude_video_llm.s(url_request_id),  # Pass url_request_id explicitly to ensure continuity
+            embed_video_content.s(url_request_id),       # Pass url_request_id explicitly to ensure continuity
             update_overall_status.s(url_request_id)      # Pass url_request_id explicitly to ensure continuity
         )
         

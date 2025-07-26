@@ -278,6 +278,20 @@ def embed_video_content(self, summary_result, url_request_id):
             'video_metadata'
         ).get(id=url_request_id)
         
+        # Check if video is excluded (skip embedding for excluded videos)
+        if url_request.failure_reason == 'excluded':
+            video_id = getattr(url_request, 'video_metadata', None)
+            video_id = getattr(video_id, 'video_id', 'unknown') if video_id else 'unknown'
+            logger.info(f"Skipping embedding for excluded video {video_id} (reason: {url_request.failure_reason})")
+            return {
+                'skipped': True, 
+                'reason': 'excluded',
+                'video_id': video_id,
+                'total_items': 0,
+                'total_embedded': 0,
+                'already_embedded': False
+            }
+        
         if not hasattr(url_request, 'video_metadata'):
             raise ValueError("VideoMetadata not found for this request")
         

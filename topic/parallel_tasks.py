@@ -198,6 +198,12 @@ def process_search_results(self, search_id: str):
         # Strategic delay for stage transition
         time.sleep(1)
         
+        # 🔬 ANALYZING STAGE: Embedding and Deep Analysis
+        progress.start_stage('ANALYZING')
+        
+        # Strategic delay for embedding and analysis processing
+        time.sleep(2)
+        
         # 💎 TREASURE_READY STAGE: Final Completion
         progress.start_stage('TREASURE_READY')
         
