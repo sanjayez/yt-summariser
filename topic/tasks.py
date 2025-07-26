@@ -5,14 +5,14 @@ Handles asynchronous YouTube search and AI processing operations
 
 import asyncio
 import logging
-from datetime import datetime, timedelta
 
 from django.db import transaction
 from celery import shared_task
-from celery.exceptions import Retry, SoftTimeLimitExceeded
+from celery.exceptions import SoftTimeLimitExceeded
 
-from .models import SearchRequest as SearchRequestModel
-from .utils.session_utils import get_or_create_session, update_session_status
+from .models import SearchRequest as SearchRequestModel, SearchSession
+from .utils.session_utils import update_session_status
+from .utils.explorer_progress import ExplorerProgressTracker
 from .services.search_service import SearchRequest
 from ai_utils.config import get_config
 from ai_utils.services.llm_service import LLMService
@@ -40,12 +40,12 @@ logger = logging.getLogger(__name__)
              retry_jitter=YOUTUBE_CONFIG['RETRY_CONFIG']['search']['jitter'])
 def process_search_query(self, search_id: str, max_videos: int = 5):
     """
-    Process a search query asynchronously
+    Process a search query asynchronously with real-time progress tracking
     
     This task handles:
-    1. AI services initialization
-    2. LLM query enhancement  
-    3. YouTube search
+    1. AI services initialization (MAPPING stage)
+    2. LLM query enhancement and planning (MAPPING stage)
+    3. YouTube search (EXPLORING stage)
     4. Database updates with results
     
     Args:
@@ -54,12 +54,17 @@ def process_search_query(self, search_id: str, max_videos: int = 5):
     Returns:
         dict: Processing result with status and details
     """
-    logger.info(f"Starting async processing for search request: {search_id}")
+    # Initialize progress tracker for real-time updates
+    progress = ExplorerProgressTracker(search_id)
+    progress.begin_expedition()
     
     search_request = None
     session = None
     
     try:
+        # 🗺️ MAPPING STAGE: Understanding and Planning
+        progress.start_stage('MAPPING')
+        
         # Get search request from database
         try:
             search_request = SearchRequestModel.objects.select_related('search_session').get(
@@ -73,6 +78,7 @@ def process_search_query(self, search_id: str, max_videos: int = 5):
         except SearchRequestModel.DoesNotExist:
             error_msg = f"Search request {search_id} not found"
             logger.error(error_msg)
+            progress.send_error("Search request not found")
             return {
                 'status': 'failed',
                 'error': 'Search request not found',
@@ -81,6 +87,10 @@ def process_search_query(self, search_id: str, max_videos: int = 5):
         
         # Initialize AI services
         try:
+            # Strategic delay for realistic progress timing
+            import time
+            time.sleep(1)
+            
             config = get_config()
             config.validate()
             
@@ -107,6 +117,7 @@ def process_search_query(self, search_id: str, max_videos: int = 5):
         except Exception as e:
             error_msg = f"Failed to initialize AI services: {str(e)}"
             logger.error(error_msg)
+            progress.send_error(f"Failed to initialize AI services: {str(e)}")
             
             _update_search_request_error(search_request, error_msg)
             _update_session_error(session)
@@ -120,6 +131,9 @@ def process_search_query(self, search_id: str, max_videos: int = 5):
         
         # Process query with LLM enhancement (async operation)
         try:
+            # Strategic delay before LLM processing
+            time.sleep(1.5)
+            
             logger.debug("Starting LLM query processing")
             
             # Create a new event loop for Celery task
@@ -193,6 +207,15 @@ def process_search_query(self, search_id: str, max_videos: int = 5):
                 logger.info("Using original query due to enhancement failure")
             intent_type = ""
         
+        # Strategic delay for stage transition
+        time.sleep(1)
+        
+        # ⛏️ EXPLORING STAGE: Discovery and Search
+        progress.start_stage('EXPLORING')
+        
+        # Strategic delay before starting searches
+        time.sleep(0.5)
+        
         # Perform YouTube search for all enhanced queries (PARALLEL EXECUTION)
         try:
             all_video_urls = []
@@ -208,6 +231,9 @@ def process_search_query(self, search_id: str, max_videos: int = 5):
                 query, search_idx = query_info
                 try:
                     logger.debug(f"Starting parallel YouTube search {search_idx+1}/{len(enhanced_queries)} for: '{query}'")
+                    
+                    # Strategic delay between searches
+                    time.sleep(0.8)
                     
                     search_request_obj = SearchRequest(
                         query=query,
@@ -254,6 +280,7 @@ def process_search_query(self, search_id: str, max_videos: int = 5):
         except Exception as e:
             error_msg = f"YouTube search failed: {str(e)}"
             logger.error(error_msg)
+            progress.send_error(f"YouTube search failed: {str(e)}")
             
             _update_search_request_error(search_request, error_msg)
             _update_session_error(session)
@@ -264,6 +291,9 @@ def process_search_query(self, search_id: str, max_videos: int = 5):
                 'details': str(e),
                 'search_id': search_id
             }
+        
+        # Strategic delay after search completion
+        time.sleep(1)
         
         # Update database with results
         try:
@@ -294,23 +324,25 @@ def process_search_query(self, search_id: str, max_videos: int = 5):
         except Exception as e:
             error_msg = f"Failed to update search results: {str(e)}"
             logger.error(error_msg)
+            progress.send_error(f"Failed to save results: {str(e)}")
             
             _update_search_request_error(search_request, error_msg)
             _update_session_error(session)
             
             return {
                 'status': 'failed',
-                'error': 'Database update failed',
+                'error': 'Failed to update search results',
                 'details': str(e),
                 'search_id': search_id
             }
         
-        # Return success result
+        # Search phase completed successfully
+        logger.info(f"Search phase completed for {search_id}")
+        
         return {
             'status': 'success',
             'search_id': search_id,
-            'session_id': str(session.session_id),
-            'original_query': original_query,
+            'enhanced_queries': enhanced_queries,
             'concepts': concepts,
             'enhanced_queries': enhanced_queries,
             'video_urls': video_urls,
@@ -320,6 +352,7 @@ def process_search_query(self, search_id: str, max_videos: int = 5):
     except SoftTimeLimitExceeded:
         # Search processing is approaching timeout
         logger.warning(f"Search processing soft timeout reached for search {search_id}")
+        progress.send_error("Search processing timeout - query may be too complex")
         
         try:
             # Mark search as failed due to timeout
@@ -337,6 +370,7 @@ def process_search_query(self, search_id: str, max_videos: int = 5):
         
     except Exception as e:
         logger.error(f"Unexpected error in search processing: {e}")
+        progress.send_error(f"Unexpected error: {str(e)}")
         
         # Handle dead letter queue on final failure
         if self.request.retries >= self.max_retries:
@@ -352,7 +386,7 @@ def process_search_query(self, search_id: str, max_videos: int = 5):
             
         return {
             'status': 'failed',
-            'error': 'Unexpected processing error',
+            'error': 'Unexpected error in search processing',
             'details': str(e),
             'search_id': search_id
         }
@@ -445,7 +479,7 @@ def _update_search_request_error(search_request: SearchRequestModel, error_messa
         logger.error(f"Failed to update search request with error: {e}")
 
 
-def _update_session_error(session: SearchRequestModel.search_session):
+def _update_session_error(session: SearchSession):
     """Helper function to update session with error status"""
     try:
         update_session_status(session, 'failed')

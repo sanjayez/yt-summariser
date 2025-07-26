@@ -11,6 +11,7 @@ import json
 import time
 from celery_progress.backend import Progress
 from celery.result import AsyncResult
+import asyncio
 
 from topic.utils.session_utils import get_or_create_session
 from topic.models import SearchRequest as SearchRequestModel
@@ -356,51 +357,139 @@ class ParallelSearchProcessAPIView(APIView):
             )
 
 
-def simple_sse_test(request):
+async def simple_sse_test(request):
     """
-    Simple sync SSE test endpoint for basic verification.
+    Async SSE test endpoint for proper ASGI streaming - uses async generators
     """
-    def event_stream():
-        # Send connection confirmation
-        yield f"data: {json.dumps({
-            'type': 'connected',
-            'message': 'Simple SSE test connection established',
-            'timestamp': time.time()
-        })}\n\n"
+    async def event_stream():
+        import json
         
-        # Send test data
-        for i in range(5):
-            time.sleep(1)
-            yield f"data: {json.dumps({
-                'type': 'test_data',
+        logger.info("Starting async simple SSE test stream")
+        
+        # Send initial connection message with padding to prevent buffering
+        yield f"data: {json.dumps({'type': 'connected', 'message': 'TESTING-123-UNIQUE-ASYNC-SSE-MESSAGE', 'timestamp': time.time()})}\n\n"
+        yield f": padding to prevent buffering {' ' * 1024}\n\n"  # Force flush with padding
+        
+        # Send 10 messages with 2-second delays using async sleep
+        for i in range(10):
+            await asyncio.sleep(2)  # Async 2 second delay between messages
+            
+            message_data = {
+                'type': 'test_message',
                 'count': i + 1,
-                'message': f'Test message {i + 1}',
+                'message': f'ASYNC Test message {i + 1} - This should appear with 2 second delays',
                 'timestamp': time.time()
-            })}\n\n"
+            }
+            
+            yield f"data: {json.dumps(message_data)}\n\n"
+            yield f": heartbeat {i + 1} {' ' * 512}\n\n"  # Padding after each message to force flush
+            logger.debug(f"Sent async test message {i + 1}")
         
         # Send completion message
-        yield f"data: {json.dumps({
-            'type': 'completed',
-            'message': 'Simple SSE test completed successfully',
-            'timestamp': time.time()
-        })}\n\n"
+        await asyncio.sleep(1)
+        yield f"data: {json.dumps({'type': 'completed', 'message': 'Async SSE test completed successfully', 'timestamp': time.time()})}\n\n"
+        
+        logger.info("Async simple SSE test stream completed")
     
     response = StreamingHttpResponse(event_stream(), content_type='text/event-stream')
-    response['Cache-Control'] = 'no-cache'
+    response['Cache-Control'] = 'no-cache, no-store, must-revalidate'
+    response['Pragma'] = 'no-cache'
+    response['Expires'] = '0'
+    response['X-Accel-Buffering'] = 'no'  # Disable nginx buffering
     response['Access-Control-Allow-Origin'] = '*'
     response['Access-Control-Allow-Headers'] = 'Cache-Control'
     response['Connection'] = 'keep-alive'
+    response['Transfer-Encoding'] = 'chunked'  # Force chunked encoding
     return response
 
 
-@api_view(['GET'])
-def search_status_stream(request, search_id):
+async def search_status_stream(request, search_id):
     """
-    Server-Sent Events endpoint for real-time search and video processing status.
+    Enhanced async SSE endpoint with Redis pub/sub for real-time progress updates.
+    Falls back to database polling for compatibility.
     """
-    def event_stream():
+    async def event_stream():
+        import redis
+        
+        logger.info(f"Starting enhanced async SSE stream for search request {search_id}")
+        
+        # Try Redis pub/sub for real-time updates first
         try:
-            logger.info(f"Starting SSE stream for search request {search_id}")
+            redis_client = redis.Redis(host='localhost', port=6379, db=3, decode_responses=True)
+            redis_client.ping()  # Test connection
+            
+            pubsub = redis_client.pubsub()
+            channel = f'search.{search_id}.progress'
+            
+            try:
+                pubsub.subscribe(channel)
+                logger.info(f"🚀 Using Redis pub/sub for real-time updates: {channel}")
+                
+                # Send connection confirmation
+                yield f"data: {json.dumps({
+                    'type': 'connected',
+                    'message': '🚀 Real-time progress tracking active',
+                    'mode': 'redis_pubsub'
+                })}\n\n"
+                yield f": padding to prevent buffering {' ' * 1024}\n\n"  # Force flush with padding
+                
+                # Listen for Redis messages with proper real-time streaming
+                start_time = time.time()
+                max_duration = 300  # 5 minutes total timeout
+                
+                while True:
+                    # Use get_message with timeout for proper real-time streaming
+                    message = pubsub.get_message(timeout=1.0)
+                    
+                    if message is not None:
+                        if message['type'] == 'message':
+                            # Forward Redis message directly to SSE immediately
+                            yield f"data: {message['data']}\n\n"
+                            yield f": heartbeat {' ' * 256}\n\n"  # Padding after each message to force flush
+                            
+                            # Check for completion
+                            try:
+                                data = json.loads(message['data'])
+                                if data.get('type') in ['complete', 'error']:
+                                    logger.info(f"Stream completion detected: {data.get('type')}")
+                                    break
+                            except:
+                                pass
+                                
+                        elif message['type'] == 'subscribe':
+                            logger.debug("Successfully subscribed to Redis channel")
+                    
+                    # Small async yield to prevent blocking
+                    await asyncio.sleep(0.1)
+                    
+                    # Check for overall timeout
+                    if time.time() - start_time > max_duration:
+                        yield f"data: {json.dumps({
+                            'type': 'timeout',
+                            'message': 'Stream timeout reached'
+                        })}\n\n"
+                        break
+                        
+            except Exception as redis_error:
+                logger.warning(f"Redis pub/sub error, falling back to polling: {redis_error}")
+                pubsub.close()
+                raise redis_error
+            finally:
+                try:
+                    pubsub.close()
+                except:
+                    pass
+                    
+        except Exception as e:
+            logger.warning(f"Redis unavailable, using database polling fallback: {e}")
+            
+            # Fallback to original database polling method (async version)
+            yield f"data: {json.dumps({
+                'type': 'connected',
+                'message': '📊 Progress tracking via database polling',
+                'mode': 'database_polling'
+            })}\n\n"
+            yield f": padding to prevent buffering {' ' * 1024}\n\n"  # Force flush with padding
             
             max_polls = 150  # Maximum number of polling attempts (5 minutes at 2s intervals)
             poll_count = 0
@@ -431,7 +520,7 @@ def search_status_stream(request, search_id):
                         'message': 'Waiting for video processing to start...',
                         'poll_count': poll_count
                     })}\n\n"
-                    time.sleep(2)
+                    await asyncio.sleep(2)  # Async sleep instead of time.sleep
                     continue
                 
                 total_progress = 0
@@ -502,6 +591,7 @@ def search_status_stream(request, search_id):
                     'query': search_request.original_query,
                     'poll_count': poll_count
                 })}\n\n"
+                yield f": heartbeat {poll_count} {' ' * 256}\n\n"  # Padding after each message to force flush
                 
                 # Check if all processing is complete
                 if completed_count >= video_count and video_count > 0:
@@ -523,7 +613,7 @@ def search_status_stream(request, search_id):
                         })}\n\n"
                         break
                     
-                time.sleep(2)  # Poll every 2 seconds
+                await asyncio.sleep(2)  # Async poll every 2 seconds
             
             # If we hit max polls, send timeout message
             if poll_count >= max_polls:
@@ -532,19 +622,16 @@ def search_status_stream(request, search_id):
                     'message': 'Stream timeout reached',
                     'poll_count': poll_count
                 })}\n\n"
-                
-        except Exception as e:
-            logger.error(f"Error in SSE stream: {e}")
-            yield f"data: {json.dumps({
-                'type': 'error',
-                'message': f'Stream error: {str(e)}'
-            })}\n\n"
     
     response = StreamingHttpResponse(event_stream(), content_type='text/event-stream')
-    response['Cache-Control'] = 'no-cache'
+    response['Cache-Control'] = 'no-cache, no-store, must-revalidate'
+    response['Pragma'] = 'no-cache'
+    response['Expires'] = '0'
+    response['X-Accel-Buffering'] = 'no'  # Disable nginx buffering
     response['Access-Control-Allow-Origin'] = '*'
     response['Access-Control-Allow-Headers'] = 'Cache-Control'
     response['Connection'] = 'keep-alive'
+    response['Transfer-Encoding'] = 'chunked'  # Force chunked encoding
     return response
 
 

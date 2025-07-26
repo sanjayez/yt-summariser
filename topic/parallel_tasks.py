@@ -1,22 +1,24 @@
 """
-Parallel Processing Orchestrator for Search-to-Process Integration
-Handles parallel video processing for search results
+Parallel processing tasks for comprehensive YouTube video analysis.
+Handles asynchronous video processing operations with real-time progress tracking.
 """
 
+import asyncio
 import logging
+from datetime import datetime
 from typing import List, Dict, Any
-from celery import shared_task, group, chord
-from celery.exceptions import SoftTimeLimitExceeded
-from django.db import transaction
-from django.core.exceptions import ObjectDoesNotExist
 
-from api.models import URLRequestTable
+from django.db import transaction
+from celery import shared_task, group
+from celery.exceptions import Retry, SoftTimeLimitExceeded
+
+from .models import SearchRequest as SearchRequestModel
+from .utils.explorer_progress import ExplorerProgressTracker
+from .utils.session_utils import update_session_status
+from video_processor.models import URLRequestTable
 from video_processor.processors.workflow import process_youtube_video
-from video_processor.processors.search_adapter import process_search_video
-from video_processor.config import YOUTUBE_CONFIG
+from video_processor.config import YOUTUBE_CONFIG, BUSINESS_LOGIC_CONFIG
 from video_processor.utils import handle_dead_letter_task
-from topic.models import SearchRequest as SearchRequestModel
-from topic.utils.session_utils import update_session_status
 
 logger = logging.getLogger(__name__)
 
@@ -30,9 +32,9 @@ logger = logging.getLogger(__name__)
              retry_jitter=YOUTUBE_CONFIG['RETRY_CONFIG']['parallel']['jitter'])
 def process_search_results(self, search_id: str):
     """
-    Parallel processing orchestrator for search results.
+    Parallel processing orchestrator for search results with real-time progress tracking.
     
-    Takes a search_id and processes all found videos in parallel.
+    Takes a search_id and processes all found videos in parallel (EXCAVATING stage).
     
     Args:
         search_id: UUID of the SearchRequest to process videos for
@@ -40,6 +42,9 @@ def process_search_results(self, search_id: str):
     Returns:
         dict: Processing result with status and details
     """
+    # Initialize progress tracker for real-time updates
+    progress = ExplorerProgressTracker(search_id)
+    
     logger.info(f"Starting parallel video processing for search request: {search_id}")
     
     search_request = None
@@ -57,6 +62,7 @@ def process_search_results(self, search_id: str):
             if search_request.status != 'success':
                 error_msg = f"Search request {search_id} is not in success status (current: {search_request.status})"
                 logger.error(error_msg)
+                progress.send_error(f"Search not ready for processing: {search_request.status}")
                 return {
                     'status': 'failed',
                     'error': 'Search request not completed successfully',
@@ -67,6 +73,8 @@ def process_search_results(self, search_id: str):
             if not video_urls:
                 error_msg = f"No video URLs found for search request {search_id}"
                 logger.warning(error_msg)
+                # Complete the expedition since there's nothing to process
+                progress.expedition_complete()
                 return {
                     'status': 'success',
                     'search_id': search_id,
@@ -79,20 +87,32 @@ def process_search_results(self, search_id: str):
         except SearchRequestModel.DoesNotExist:
             error_msg = f"Search request {search_id} not found"
             logger.error(error_msg)
+            progress.send_error("Search request not found")
             return {
                 'status': 'failed',
                 'error': 'Search request not found',
                 'search_id': search_id
             }
         
+        # 🔍 EXCAVATING STAGE: Processing Video Content
+        progress.start_stage('EXCAVATING')
+        
+        # Strategic delay for stage start
+        import time
+        time.sleep(1)
+        
         # Create URLRequestTable entries for each video
         try:
+            # Strategic delay for preparation
+            time.sleep(1.5)
+            
             url_request_ids = _create_url_request_entries(search_request, video_urls)
             logger.info(f"Created {len(url_request_ids)} URLRequestTable entries for search request {search_id}")
             
         except Exception as e:
             error_msg = f"Failed to create URLRequestTable entries: {str(e)}"
             logger.error(error_msg)
+            progress.send_error(f"Failed to prepare video processing: {str(e)}")
             _update_search_request_processing_status(search_request, 'failed', error_msg)
             return {
                 'status': 'failed',
@@ -101,70 +121,145 @@ def process_search_results(self, search_id: str):
                 'search_id': search_id
             }
         
-        # Update search request status to indicate video processing started
+        # Parallel video processing with progress tracking
         try:
-            _update_search_request_processing_status(search_request, 'processing_videos', 
-                                                   f"Started processing {len(url_request_ids)} videos")
-            logger.info(f"Updated search request {search_id} to processing_videos status")
+            # Strategic delay before starting parallel processing
+            time.sleep(1)
             
-        except Exception as e:
-            logger.error(f"Failed to update search request status: {e}")
-            # Continue with processing even if status update fails
-        
-        # Create parallel group for video processing
-        try:
-            # Use search adapter for better integration
-            video_processing_group = group(
-                process_search_video.s(url_request_id) for url_request_id in url_request_ids
+            # Create Celery group for parallel processing
+            job_group = group(
+                process_youtube_video.s(url_request_id) 
+                for url_request_id in url_request_ids
             )
             
-            # Create chord for parallel processing with callback
-            processing_chord = chord(video_processing_group)(
-                finalize_search_processing.s(search_id, url_request_ids)
-            )
+            # Execute parallel processing
+            group_result = job_group.apply_async()
+            task_ids = [task.id for task in group_result.children or []]
             
-            logger.info(f"Started parallel processing chord for search {search_id} with {len(url_request_ids)} videos")
+            logger.info(f"Initiated parallel processing with {len(task_ids)} tasks for search {search_id}")
             
-            return {
-                'status': 'processing',
-                'search_id': search_id,
-                'total_videos': len(url_request_ids),
-                'url_request_ids': url_request_ids,
-                'chord_id': processing_chord.id,
-                'message': f"Started parallel processing of {len(url_request_ids)} videos"
-            }
+            # Monitor progress of parallel tasks
+            processed_count = 0
+            total_videos = len(url_request_ids)
+            
+            # Poll for completion with progress updates
+            while not group_result.ready():
+                # Check individual task progress
+                completed_tasks = sum(1 for task in group_result.children if task.ready())
+                if completed_tasks > processed_count:
+                    processed_count = completed_tasks
+                    stage_progress = 20 + (processed_count * 60 // total_videos)  # 20-80% range
+                    
+
+                    
+                    logger.info(f"Video processing progress: {processed_count}/{total_videos} completed")
+                
+                # Short sleep to avoid busy waiting
+                import time
+                time.sleep(2)
+            
+
+            
+            # Count results without calling .get() (which is forbidden in Celery tasks)
+            # Instead, check the database status of URL requests
+            from video_processor.models import URLRequestTable
+            
+            completed_count = 0
+            successful_count = 0
+            failed_count = 0
+            
+            for url_request_id in url_request_ids:
+                try:
+                    url_request = URLRequestTable.objects.get(request_id=url_request_id)
+                    if url_request.status in ['success', 'failed']:
+                        completed_count += 1
+                        if url_request.status == 'success':
+                            successful_count += 1
+                        else:
+                            failed_count += 1
+                except URLRequestTable.DoesNotExist:
+                    logger.warning(f"URL request {url_request_id} not found when checking status")
+                    failed_count += 1
+            
+            logger.info(f"Parallel processing completed: {successful_count} successful, {failed_count} failed, {completed_count} total")
             
         except Exception as e:
-            error_msg = f"Failed to start parallel processing: {str(e)}"
+            error_msg = f"Parallel video processing failed: {str(e)}"
             logger.error(error_msg)
+            progress.send_error(f"Video processing failed: {str(e)}")
             _update_search_request_processing_status(search_request, 'failed', error_msg)
             return {
                 'status': 'failed',
-                'error': 'Failed to start parallel processing',
+                'error': 'Parallel video processing failed',
                 'details': str(e),
                 'search_id': search_id
             }
+        
+        # Strategic delay for stage transition
+        time.sleep(1)
+        
+        # 💎 TREASURE_READY STAGE: Final Completion
+        progress.start_stage('TREASURE_READY')
+        
+        # Strategic delay for final processing
+        time.sleep(1.5)
+        
+        # Update final status
+        try:
+            _update_search_request_processing_status(search_request, 'completed', 
+                                                   f"Processed {successful_count} videos successfully")
+            update_session_status(session, 'success')
             
+            # Strategic delay before final completion
+            time.sleep(0.5)
+            
+            progress.expedition_complete()
+            
+            logger.info(f"Search results processing completed for {search_id}")
+            
+            return {
+                'status': 'success',
+                'search_id': search_id,
+                'processed_videos': successful_count,
+                'failed_videos': failed_count,
+                'total_videos': total_videos,
+                'task_ids': task_ids
+            }
+            
+        except Exception as e:
+            error_msg = f"Failed to update final status: {str(e)}"
+            logger.error(error_msg)
+            progress.send_error(f"Failed to finalize results: {str(e)}")
+            return {
+                'status': 'failed',
+                'error': 'Failed to update final status',
+                'details': str(e),
+                'search_id': search_id
+            }
+        
     except SoftTimeLimitExceeded:
-        # Parallel orchestration is approaching timeout
-        logger.warning(f"Parallel processing orchestration soft timeout reached for search {search_id}")
+        # Combined processing is approaching timeout
+        logger.warning(f"Combined search and video processing soft timeout reached for search {search_id}")
+        progress.send_error("Processing timeout - too many videos or complex content")
         
         try:
             # Mark search as failed due to timeout
             if search_request:
-                _update_search_request_processing_status(search_request, 'failed', "Parallel processing orchestration timed out")
+                _update_search_request_processing_status(search_request, 'failed', 
+                                                       "Processing timed out - query may be too complex")
             if session:
                 update_session_status(session, 'failed')
-            logger.error(f"Marked parallel processing as failed due to timeout: {search_id}")
+            logger.error(f"Marked combined processing as failed due to timeout: {search_id}")
             
         except Exception as cleanup_error:
-            logger.error(f"Failed to update status during parallel processing timeout cleanup: {cleanup_error}")
+            logger.error(f"Failed to update status during combined processing timeout cleanup: {cleanup_error}")
         
         # Re-raise to mark task as failed
-        raise Exception(f"Parallel processing orchestration timeout for search {search_id}")
+        raise Exception(f"Combined search and video processing timeout for search {search_id}")
         
     except Exception as e:
-        logger.error(f"Unexpected error in parallel processing orchestration: {e}")
+        logger.error(f"Unexpected error in parallel processing: {e}")
+        progress.send_error(f"Unexpected processing error: {str(e)}")
         
         # Handle dead letter queue on final failure
         if self.request.retries >= self.max_retries:
@@ -172,7 +267,7 @@ def process_search_results(self, search_id: str):
         
         try:
             if search_request:
-                _update_search_request_processing_status(search_request, 'failed', f"Orchestration error: {str(e)}")
+                _update_search_request_processing_status(search_request, 'failed', f"Unexpected error: {str(e)}")
             if session:
                 update_session_status(session, 'failed')
         except:
@@ -180,7 +275,7 @@ def process_search_results(self, search_id: str):
             
         return {
             'status': 'failed',
-            'error': 'Unexpected orchestration error',
+            'error': 'Unexpected error in parallel processing',
             'details': str(e),
             'search_id': search_id
         }
