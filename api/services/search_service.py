@@ -310,7 +310,7 @@ Answer:"""
                     'type': 'transcript',
                     'timestamp': 'Unknown',
                     'text': s['text'],
-                    'youtube_url': video_metadata.webpage_url if video_metadata else '',
+                    'youtube_url': str(video_metadata.webpage_url) if video_metadata else '',
                     'confidence': s['relevance']
                 } for s in top_sentences]
                 

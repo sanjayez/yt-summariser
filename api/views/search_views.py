@@ -4,7 +4,7 @@ Contains clean async views with proper RAG integration and error handling.
 """
 import json
 from typing import Dict, Any
-from django.http import JsonResponse, HttpRequest
+from django.http import JsonResponse, HttpRequest, HttpResponse
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_http_methods
 from asgiref.sync import sync_to_async
@@ -153,7 +153,7 @@ async def ask_video_question(request: HttpRequest, request_id: UUID) -> JsonResp
             'video_id': video_metadata.video_id,
             'title': video_metadata.title,
             'duration_string': video_metadata.duration_string,
-            'youtube_url': video_metadata.webpage_url
+            'youtube_url': str(video_metadata.webpage_url)
         }
         
         # Prepare validated response
@@ -169,7 +169,13 @@ async def ask_video_question(request: HttpRequest, request_id: UUID) -> JsonResp
         )
         
         logger.info(f"Question answered for video {video_metadata.video_id}: {question[:50]}...")
-        return JsonResponse(response_data.dict(), status=200)
+        
+        # Use Pydantic's model_dump_json method to properly serialize HttpUrl objects
+        return HttpResponse(
+            response_data.model_dump_json(),
+            content_type='application/json',
+            status=200
+        )
         
     except Exception as e:
         logger.error(f"Question answering failed for {request_id}: {e}")

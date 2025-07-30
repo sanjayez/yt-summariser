@@ -106,11 +106,11 @@ class ResponseService:
             'channel_name': video_metadata.channel_name,
             'view_count': video_metadata.view_count,
             'like_count': video_metadata.like_count,
-            'upload_date': video_metadata.upload_date,
+            'upload_date': video_metadata.upload_date.isoformat() if video_metadata.upload_date else None,
             'language': video_metadata.language,
             'tags': video_metadata.tags[:10] if video_metadata.tags else [],  # Limit tags
-            'youtube_url': video_metadata.webpage_url,
-            'thumbnail': video_metadata.thumbnail
+            'youtube_url': str(video_metadata.webpage_url),
+            'thumbnail': str(video_metadata.thumbnail) if video_metadata.thumbnail else None
         }
     
     def format_search_sources(self, results: List[Dict[str, Any]], video_metadata=None) -> List[Dict[str, Any]]:
@@ -143,7 +143,7 @@ class ResponseService:
                     'type': 'segment',
                     'timestamp': time_str,
                     'text': clean_text,
-                    'youtube_url': metadata.get('youtube_url', video_metadata.webpage_url if video_metadata else ''),
+                    'youtube_url': metadata.get('youtube_url', str(video_metadata.webpage_url) if video_metadata else ''),
                     'confidence': result.get('score', 0.0)
                 })
             else:
@@ -152,7 +152,7 @@ class ResponseService:
                     'type': result.get('type', 'transcript'),
                     'timestamp': 'Unknown',
                     'text': result.get('text', ''),
-                    'youtube_url': video_metadata.webpage_url if video_metadata else '',
+                    'youtube_url': str(video_metadata.webpage_url) if video_metadata else '',
                     'confidence': result.get('relevance', result.get('score', 0.0))
                 })
         

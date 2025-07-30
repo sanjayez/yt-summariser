@@ -4,7 +4,7 @@ Contains clean, focused async views with proper error handling and validation.
 """
 import json
 from typing import Dict, Any
-from django.http import JsonResponse, HttpRequest
+from django.http import JsonResponse, HttpRequest, HttpResponse
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_http_methods
 from asgiref.sync import sync_to_async
@@ -79,7 +79,7 @@ async def process_single_video(request: HttpRequest) -> JsonResponse:
         )
         
         logger.info(f"Video processing initiated for URL: {str(video_request.url)[:50]}...")
-        return JsonResponse(response_data.dict(), status=201)
+        return HttpResponse(response_data.model_dump_json(), content_type='application/json', status=201)
         
     except Exception as e:
         logger.error(f"Video processing initiation failed: {e}")
@@ -195,7 +195,7 @@ async def get_video_summary(request: HttpRequest, request_id: UUID) -> JsonRespo
         )
         
         logger.info(f"Video summary retrieved for request: {request_id}")
-        return JsonResponse(response_data.dict(), status=200)
+        return HttpResponse(response_data.model_dump_json(), content_type='application/json', status=200)
         
     except Exception as e:
         logger.error(f"Video summary retrieval failed for {request_id}: {e}")

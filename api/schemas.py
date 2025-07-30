@@ -2,11 +2,12 @@
 Pydantic schemas for API request/response validation and type safety.
 This provides comprehensive type checking and validation for all API endpoints.
 """
-from pydantic import BaseModel, Field, HttpUrl, validator
+from pydantic import BaseModel, Field, HttpUrl, field_validator
 from typing import List, Optional, Dict, Any, Union
 from uuid import UUID
-from datetime import datetime
+from datetime import datetime, date
 from enum import Enum
+from decimal import Decimal
 
 
 class VideoProcessingStatus(str, Enum):
@@ -33,7 +34,8 @@ class VideoProcessRequest(BaseModel):
     """Request schema for video processing endpoint"""
     url: HttpUrl = Field(..., description="Valid YouTube video URL")
     
-    @validator('url')
+    @field_validator('url')
+    @classmethod
     def validate_youtube_url(cls, v):
         """Validate that URL is from YouTube"""
         url_str = str(v)
@@ -58,7 +60,8 @@ class VideoQuestionRequest(BaseModel):
         description="Question about the video content"
     )
     
-    @validator('question')
+    @field_validator('question')
+    @classmethod
     def validate_question(cls, v):
         """Validate question format"""
         if not v.strip():
@@ -87,6 +90,26 @@ class SearchSource(BaseModel):
         description="Confidence score for this source"
     )
     
+    @field_validator('youtube_url', mode='before')
+    @classmethod
+    def serialize_youtube_url(cls, v):
+        """Convert URL objects to strings for proper HttpUrl validation"""
+        if v is None:
+            return None
+        return str(v)
+    
+    @field_validator('confidence', mode='before')
+    @classmethod
+    def serialize_confidence(cls, v):
+        """Ensure confidence is a proper float between 0.0 and 1.0"""
+        if v is None:
+            return 0.0
+        try:
+            conf = float(v)
+            return max(0.0, min(1.0, conf))  # Clamp between 0.0 and 1.0
+        except (ValueError, TypeError):
+            return 0.0
+    
     class Config:
         json_schema_extra = {
             "example": {
@@ -109,11 +132,42 @@ class VideoMetadataResponse(BaseModel):
     channel_name: Optional[str] = Field(None, description="Channel name")
     view_count: Optional[int] = Field(None, description="View count")
     like_count: Optional[int] = Field(None, description="Like count")
-    upload_date: Optional[str] = Field(None, description="Upload date")
+    upload_date: Optional[str] = Field(None, description="Upload date in YYYY-MM-DD format")
     language: Optional[str] = Field(None, description="Video language")
     tags: Optional[List[str]] = Field(None, description="Video tags (limited)")
     youtube_url: HttpUrl = Field(..., description="YouTube video URL")
     thumbnail: Optional[HttpUrl] = Field(None, description="Thumbnail URL")
+    
+    @field_validator('upload_date', mode='before')
+    @classmethod
+    def serialize_upload_date(cls, v):
+        """Convert date/datetime objects to string format"""
+        if isinstance(v, date):
+            return v.isoformat()  # Returns YYYY-MM-DD format
+        elif isinstance(v, datetime):
+            return v.date().isoformat()  # Extract date part and format
+        return v
+    
+    @field_validator('view_count', 'like_count', 'duration', mode='before')
+    @classmethod
+    def serialize_numeric_fields(cls, v):
+        """Convert numeric types to proper integers"""
+        if v is None:
+            return None
+        if isinstance(v, (int, float, Decimal)):
+            return int(v) if v >= 0 else 0  # Ensure non-negative integers
+        try:
+            return int(float(str(v))) if str(v).strip() else None
+        except (ValueError, TypeError):
+            return None
+    
+    @field_validator('youtube_url', 'thumbnail', mode='before')
+    @classmethod
+    def serialize_url_fields(cls, v):
+        """Convert URL objects to strings for proper HttpUrl validation"""
+        if v is None:
+            return None
+        return str(v)
 
 
 class ProcessingStages(BaseModel):
@@ -157,9 +211,32 @@ class VideoSummaryResponse(BaseModel):
     key_points: List[str] = Field(..., description="Key points from the video")
     video_metadata: VideoMetadataResponse = Field(..., description="Video metadata")
     status: str = Field(..., description="Processing status")
-    generated_at: Optional[str] = Field(None, description="Summary generation timestamp")
+    generated_at: Optional[str] = Field(None, description="Summary generation timestamp in ISO format")
     summary_length: int = Field(..., description="Length of summary in characters")
     key_points_count: int = Field(..., description="Number of key points")
+    
+    @field_validator('generated_at', mode='before')
+    @classmethod
+    def serialize_generated_at(cls, v):
+        """Convert datetime objects to ISO string format"""
+        if isinstance(v, datetime):
+            return v.isoformat()
+        elif isinstance(v, date):
+            return datetime.combine(v, datetime.min.time()).isoformat()
+        return v
+    
+    @field_validator('summary_length', 'key_points_count', mode='before')
+    @classmethod
+    def serialize_count_fields(cls, v):
+        """Ensure count fields are proper integers"""
+        if v is None:
+            return 0
+        if isinstance(v, (int, float, Decimal)):
+            return int(v) if v >= 0 else 0
+        try:
+            return int(float(str(v))) if str(v).strip() else 0
+        except (ValueError, TypeError):
+            return 0
 
 
 class VideoSearchResponse(BaseModel):
