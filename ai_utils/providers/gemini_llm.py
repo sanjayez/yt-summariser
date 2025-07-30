@@ -45,7 +45,7 @@ class GeminiLLMProvider(LLMProvider):
             model=config.gemini.model,
             api_key=config.gemini.api_key,
             temperature=config.gemini.temperature,
-            max_tokens=4000,  # Increased significantly to prevent MAX_TOKENS errors
+            max_tokens=8000,  # Very high limit to prevent MAX_TOKENS errors completely
             # LlamaIndex handles these parameters internally
             timeout=config.gemini.timeout,
         )

@@ -57,6 +57,24 @@ class PineconeConfig(BaseModel):
     cloud: str = Field(default="aws", description="Cloud provider (aws or gcp)")
     region: str = Field(default="us-east-1", description="Cloud region")
 
+class WeaviateConfig(BaseModel):
+    """Weaviate configuration settings"""
+    url: str = Field(default="http://localhost:8080", description="Weaviate server URL")
+    api_key: Optional[str] = Field(None, description="Weaviate API key (for Weaviate Cloud)")
+    collection_name: str = Field(default="YoutubeTranscripts", description="Default collection name")
+    dimension: int = Field(default=768, description="Vector dimension (for Arctic-Embed-m-v2.0)")
+    distance_metric: str = Field(default="cosine", description="Distance metric for similarity")
+    timeout: int = Field(default=30, description="Request timeout in seconds")
+    max_retries: int = Field(default=3, description="Maximum retry attempts")
+    batch_size: int = Field(default=100, description="Batch size for bulk operations")
+    
+    # Additional headers for authentication
+    headers: Optional[Dict[str, str]] = Field(None, description="Additional headers for requests")
+    
+    # Weaviate Cloud Service (WCS) settings
+    cluster_url: Optional[str] = Field(None, description="WCS cluster URL (overrides url)")
+    auth_client_secret: Optional[str] = Field(None, description="WCS auth client secret")
+
 class LlamaIndexConfig(BaseModel):
     """LlamaIndex configuration settings"""
     chunk_size: int = Field(default=512, description="Text chunk size for processing")
@@ -69,6 +87,7 @@ class AIConfig(BaseModel):
     openai: OpenAIConfig
     gemini: GeminiConfig
     pinecone: PineconeConfig
+    weaviate: WeaviateConfig
     llamaindex: LlamaIndexConfig = Field(default_factory=LlamaIndexConfig)
     
     # Processing settings
@@ -101,7 +120,7 @@ class AIConfig(BaseModel):
                 api_key=os.getenv("GOOGLE_API_KEY", ""),
                 model=os.getenv("GEMINI_MODEL", "gemini-2.5-flash"),
                 temperature=float(os.getenv("GEMINI_TEMPERATURE", "0.7")),
-                max_tokens=int(os.getenv("GEMINI_MAX_TOKENS", "4000")),
+                max_tokens=int(os.getenv("GEMINI_MAX_TOKENS", "8000")),
                 top_p=float(os.getenv("GEMINI_TOP_P", "1.0")),
                 top_k=int(os.getenv("GEMINI_TOP_K")) if os.getenv("GEMINI_TOP_K") else 40,
                 timeout=int(os.getenv("GEMINI_TIMEOUT", "30")),
@@ -115,6 +134,18 @@ class AIConfig(BaseModel):
                 metric=os.getenv("PINECONE_METRIC", "cosine"),
                 cloud=os.getenv("PINECONE_CLOUD", "aws"),
                 region=os.getenv("PINECONE_REGION", "us-east-1")
+            ),
+            weaviate=WeaviateConfig(
+                url=os.getenv("WEAVIATE_URL", "http://localhost:8080"),
+                api_key=os.getenv("WEAVIATE_API_KEY"),
+                collection_name=os.getenv("WEAVIATE_COLLECTION_NAME", "YoutubeTranscripts"),
+                dimension=int(os.getenv("WEAVIATE_DIMENSION", "768")),
+                distance_metric=os.getenv("WEAVIATE_DISTANCE_METRIC", "cosine"),
+                timeout=int(os.getenv("WEAVIATE_TIMEOUT", "30")),
+                max_retries=int(os.getenv("WEAVIATE_MAX_RETRIES", "3")),
+                batch_size=int(os.getenv("WEAVIATE_BATCH_SIZE", "100")),
+                cluster_url=os.getenv("WEAVIATE_CLUSTER_URL"),
+                auth_client_secret=os.getenv("WEAVIATE_AUTH_CLIENT_SECRET")
             ),
             llamaindex=LlamaIndexConfig(
                 chunk_size=int(os.getenv("LLAMAINDEX_CHUNK_SIZE", "512")),
@@ -134,10 +165,10 @@ class AIConfig(BaseModel):
             raise ValueError("OPENAI_API_KEY is required")
         if not self.gemini.api_key:
             raise ValueError("GOOGLE_API_KEY is required for Gemini")
-        if not self.pinecone.api_key:
-            raise ValueError("PINECONE_API_KEY is required")
-        if not self.pinecone.environment:
-            raise ValueError("PINECONE_ENVIRONMENT is required")
+        if not self.weaviate.url:
+            raise ValueError("WEAVIATE_URL is required")
+        if not self.weaviate.collection_name:
+            raise ValueError("WEAVIATE_COLLECTION_NAME is required")
 
 # Global configuration instance
 config = AIConfig.from_env()

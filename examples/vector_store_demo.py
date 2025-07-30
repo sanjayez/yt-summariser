@@ -19,7 +19,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # Import AI utilities
-from ai_utils.providers import PineconeVectorStoreProvider, OpenAIEmbeddingProvider
+from ai_utils.providers import WeaviateVectorStoreProvider, OpenAIEmbeddingProvider
 from ai_utils.services import VectorService, EmbeddingService
 from ai_utils.models import (
     VectorDocument, VectorQuery, VectorSearchResponse,
@@ -41,7 +41,7 @@ async def demonstrate_vector_store_operations():
     embedding_service = EmbeddingService(provider=embedding_provider)
     
     # Initialize vector service
-    vector_provider = PineconeVectorStoreProvider(config=config)
+    vector_provider = WeaviateVectorStoreProvider(config=config)
     vector_service = VectorService(provider=vector_provider)
     
     # Health checks
@@ -262,7 +262,7 @@ async def demonstrate_index_management():
     logger.info("🗄️ Starting Index Management Demonstration")
     
     config = get_config()
-    vector_provider = PineconeVectorStoreProvider(config=config)
+    vector_provider = WeaviateVectorStoreProvider(config=config)
     vector_service = VectorService(provider=vector_provider)
     
     # List indexes
@@ -296,21 +296,21 @@ async def main():
     try:
         # Check configuration
         config = get_config()
-        logger.info(f"Configuration loaded: Pinecone index '{config.pinecone.index_name}'")
+        logger.info(f"Configuration loaded: Weaviate index '{config.weaviate.index_name}'")
         logger.info(f"Embedding model: {config.openai.embedding_model}")
-        logger.info(f"Vector dimension: {config.pinecone.dimension}")
+        logger.info(f"Vector dimension: {config.weaviate.dimension}")
         
         # Check if we should use existing index
-        vector_provider = PineconeVectorStoreProvider(config=config)
+        vector_provider = WeaviateVectorStoreProvider(config=config)
         vector_service = VectorService(provider=vector_provider)
         existing_indexes = await vector_service.list_indexes()
         if existing_indexes:
             existing_index = existing_indexes[0]
             logger.info(f"Found existing index: {existing_index.name} (dimension: {existing_index.dimension})")
             # Update config to use existing index
-            config.pinecone.index_name = existing_index.name
-            config.pinecone.dimension = existing_index.dimension
-            logger.info(f"Using existing index: {config.pinecone.index_name}")
+            config.weaviate.index_name = existing_index.name
+            config.weaviate.dimension = existing_index.dimension
+            logger.info(f"Using existing index: {config.weaviate.index_name}")
         
         # Run demonstrations
         await demonstrate_index_management()

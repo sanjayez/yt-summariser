@@ -30,9 +30,8 @@ from ..text_utils.chunking import (
     validate_embedding_text,
     prepare_batch_embeddings
 )
-from ai_utils.services.embedding_service import EmbeddingService
 from ai_utils.services.vector_service import VectorService
-from ai_utils.models import VectorDocument
+from ai_utils.models import VectorDocument, VectorQuery
 
 logger = logging.getLogger(__name__)
 
@@ -42,19 +41,15 @@ def embed_video_content_sync(video_metadata: VideoMetadata, transcript: VideoTra
     Returns embedding statistics and results.
     """
     try:
-        # Initialize services with sync providers
+        # Initialize services with native Weaviate vectorization
         from ai_utils.config import get_config
-        from ai_utils.providers.openai_embeddings import OpenAIEmbeddingProvider
-        from ai_utils.providers.pinecone_store import PineconeVectorStoreProvider
-        from ai_utils.services.embedding_service import EmbeddingService
+        from ai_utils.providers.weaviate_store import WeaviateVectorStoreProvider
         from ai_utils.services.vector_service import VectorService
         
         config = get_config()
-        embedding_provider = OpenAIEmbeddingProvider(config)
-        vector_provider = PineconeVectorStoreProvider(config)
-        
-        embedding_service = EmbeddingService(embedding_provider)
+        vector_provider = WeaviateVectorStoreProvider(config)
         vector_service = VectorService(vector_provider)
+        # No embedding service needed - Weaviate handles embeddings natively
         
         video_id = video_metadata.video_id
         embedding_items = []
@@ -136,7 +131,7 @@ def embed_video_content_sync(video_metadata: VideoMetadata, transcript: VideoTra
         
         logger.info(f"Prepared {len(embedding_items)} items for embedding")
         
-        # Batch process embeddings using custom approach
+        # Batch process using native Weaviate vectorization
         batches = prepare_batch_embeddings(embedding_items, batch_size=15)
         total_embedded = 0
         failed_embeddings = []
@@ -145,38 +140,24 @@ def embed_video_content_sync(video_metadata: VideoMetadata, transcript: VideoTra
             try:
                 logger.info(f"Processing batch {batch_idx + 1}/{len(batches)} with {len(batch)} items")
                 
-                # Extract texts for embedding
-                texts = [item['text'] for item in batch]
+                # Create VectorDocuments without embeddings - Weaviate will generate them natively
+                vector_documents = []
+                for item in batch:
+                    vector_doc = VectorDocument(
+                        id=item['id'],  # Use our specific ID
+                        text=item['text'],
+                        embedding=None,  # No embedding needed - Weaviate handles this natively
+                        metadata=item['metadata']
+                    )
+                    vector_documents.append(vector_doc)
                 
-                # Generate embeddings for the batch
+                # Upsert the documents - Weaviate will handle embedding generation
                 try:
-                    import asyncio
-                    
                     # Create a new event loop for this operation
                     loop = asyncio.new_event_loop()
                     asyncio.set_event_loop(loop)
                     
                     try:
-                        # Get embeddings using the embedding service
-                        embeddings = loop.run_until_complete(
-                            embedding_service.embed_texts_with_batching(texts)
-                        )
-                        
-                        if len(embeddings) != len(texts):
-                            raise ValueError(f"Expected {len(texts)} embeddings, got {len(embeddings)}")
-                        
-                        # Create VectorDocuments with our specific IDs and the generated embeddings
-                        vector_documents = []
-                        for i, (item, embedding) in enumerate(zip(batch, embeddings)):
-                            vector_doc = VectorDocument(
-                                id=item['id'],  # Use our specific ID
-                                text=item['text'],
-                                embedding=embedding,  # Use the generated embedding
-                                metadata=item['metadata']
-                            )
-                            vector_documents.append(vector_doc)
-                        
-                        # Upsert the documents with embeddings
                         result = loop.run_until_complete(
                             vector_service.upsert_documents(
                                 documents=vector_documents,
@@ -186,16 +167,16 @@ def embed_video_content_sync(video_metadata: VideoMetadata, transcript: VideoTra
                         
                         if result and result.get('upserted_count', 0) > 0:
                             total_embedded += result['upserted_count']
-                            logger.info(f"Successfully embedded batch {batch_idx + 1}: {result['upserted_count']} items")
+                            logger.info(f"Successfully processed batch {batch_idx + 1}: {result['upserted_count']} items with native vectorization")
                         else:
-                            logger.warning(f"Failed to embed batch {batch_idx + 1}")
+                            logger.warning(f"Failed to process batch {batch_idx + 1}")
                             failed_embeddings.extend([item['id'] for item in batch])
                             
                     finally:
                         loop.close()
                         
                 except Exception as embed_error:
-                    logger.error(f"Error embedding batch {batch_idx + 1}: {embed_error}")
+                    logger.error(f"Error processing batch {batch_idx + 1}: {embed_error}")
                     failed_embeddings.extend([item['id'] for item in batch])
                     continue
                 
@@ -306,15 +287,52 @@ def embed_video_content(self, summary_result, url_request_id):
         
         update_task_progress(self, TASK_STATES.get('EMBEDDING_CONTENT', 'Embedding Content'), 30)
         
-        # Check if already embedded (idempotency)
+        # Check if already embedded (improved idempotency with vector store verification)
         if video_metadata.is_embedded:
-            logger.info(f"Video {video_metadata.video_id} already embedded, skipping")
-            return {
-                'total_items': 0,
-                'total_embedded': 0,
-                'already_embedded': True,
-                'video_id': video_metadata.video_id
-            }
+            # Verify embeddings actually exist in vector store
+            try:
+                # Get vector service instance
+                from ai_utils.config import get_config
+                config = get_config()
+                vector_service = VectorService(config=config)
+                
+                # Check if vectors exist for this video in the vector store
+                test_query = VectorQuery(
+                    query=f"video content from {video_metadata.title or video_metadata.video_id}",
+                    top_k=1,
+                    filters={"video_id": video_metadata.video_id}
+                )
+                
+                # Create event loop for idempotency check
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                
+                try:
+                    search_result = loop.run_until_complete(
+                        vector_service.search_similar(query=test_query)
+                    )
+                finally:
+                    loop.close()
+                
+                if search_result.results and len(search_result.results) > 0:
+                    logger.info(f"Video {video_metadata.video_id} already embedded and verified in vector store, skipping")
+                    return {
+                        'total_items': 0,
+                        'total_embedded': 0,
+                        'already_embedded': True,
+                        'video_id': video_metadata.video_id
+                    }
+                else:
+                    logger.warning(f"Video {video_metadata.video_id} marked as embedded but no vectors found in store, re-embedding")
+                    # Reset the flag and continue with embedding
+                    video_metadata.is_embedded = False
+                    video_metadata.save()
+                    
+            except Exception as e:
+                logger.warning(f"Could not verify vector store embeddings for {video_metadata.video_id}: {e}, re-embedding")
+                # Reset the flag and continue with embedding
+                video_metadata.is_embedded = False
+                video_metadata.save()
         
         # Perform embedding using synchronous function
         embedding_result = embed_video_content_sync(video_metadata, transcript)

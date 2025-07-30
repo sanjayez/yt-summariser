@@ -15,7 +15,7 @@ from typing import List, Dict, Any
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from ai_utils.config import get_config
-from ai_utils.providers import OpenAIEmbeddingProvider, PineconeVectorStoreProvider, OpenAILLMProvider
+from ai_utils.providers import OpenAIEmbeddingProvider, WeaviateVectorStoreProvider, OpenAILLMProvider
 from ai_utils.services import EmbeddingService, VectorService, LLMService
 from ai_utils.models import (
     VectorDocument, VectorQuery, RAGQuery, 
@@ -49,7 +49,7 @@ class AIKnowledgeBase:
         
         # Initialize providers
         embedding_provider = OpenAIEmbeddingProvider(config=self.config)
-        vector_provider = PineconeVectorStoreProvider(config=self.config)
+        vector_provider = WeaviateVectorStoreProvider(config=self.config)
         llm_provider = OpenAILLMProvider(config=self.config)
         
         # Initialize services
@@ -478,7 +478,7 @@ async def main():
         logger.error(f"❌ Demo failed: {str(e)}")
         logger.info("\n🔧 Troubleshooting tips:")
         logger.info("   1. Check your OpenAI API key is set: OPENAI_API_KEY")
-        logger.info("   2. Verify Pinecone configuration (API key, region, index)")
+        logger.info("   2. Verify Weaviate configuration (API key, region, index)")
         logger.info("   3. Ensure you have internet connectivity")
         logger.info("   4. Check the logs above for specific error details")
         raise

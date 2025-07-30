@@ -121,7 +121,7 @@ class VectorService:
     async def search_by_text(
         self, 
         text: str, 
-        embedding_service,
+        embedding_service=None,  # Now optional since Weaviate handles embeddings natively
         top_k: int = 5,
         filters: Dict[str, Any] = None,
         include_metadata: bool = True,
@@ -129,11 +129,11 @@ class VectorService:
         index_name: str = None
     ) -> VectorSearchResponse:
         """
-        Search by text (embeds text first, then searches).
+        Search by text using Weaviate's native vectorization.
         
         Args:
             text: Text to search for
-            embedding_service: Service to embed the text
+            embedding_service: Service to embed the text (unused with native vectorization)
             top_k: Number of results to return
             filters: Metadata filters
             include_metadata: Include metadata in results
@@ -144,21 +144,20 @@ class VectorService:
             Search response with results
         """
         try:
-            # Embed the text
-            embedding_response = await embedding_service.embed_text(text)
-            
-            # Create search query
+            # Create search query - Weaviate will handle embedding natively
             query = VectorQuery(
                 query=text,
-                embedding=embedding_response.embedding,
+                embedding=None,  # No embedding needed - Weaviate handles this
                 top_k=top_k,
                 filters=filters,
                 include_metadata=include_metadata,
                 include_embeddings=include_embeddings
             )
             
-            # Search
-            return await self.search_similar(query, index_name)
+            # Perform the actual vector search
+            result = await self.search_similar(query, index_name)
+            
+            return result
             
         except Exception as e:
             logger.error(f"Failed to search by text: {str(e)}")
@@ -239,17 +238,17 @@ class VectorService:
     async def bulk_upsert_with_embedding(
         self, 
         texts: List[str], 
-        embedding_service,
+        embedding_service=None,  # Now optional since Weaviate handles embeddings natively
         metadata_list: List[Dict[str, Any]] = None,
         index_name: str = None,
         job_id: str = None
     ) -> Dict[str, Any]:
         """
-        Bulk upsert texts with automatic embedding.
+        Bulk upsert texts using Weaviate's native vectorization.
         
         Args:
             texts: List of texts to embed and upsert
-            embedding_service: Service to embed the texts
+            embedding_service: Service to embed the texts (unused with native vectorization)
             metadata_list: List of metadata for each text
             index_name: Index name (default from config)
             job_id: Optional job ID for tracking
@@ -262,28 +261,21 @@ class VectorService:
         # Create processing job for tracking
         job = ProcessingJob(
             job_id=job_id or f"bulk_upsert_{int(time.time())}",
-            operation="bulk_upsert_with_embedding",
+            operation="bulk_upsert_with_native_embedding",
             total_items=len(texts),
             status=ProcessingStatus.PROCESSING
         )
         self._active_jobs[job.job_id] = job
         
         try:
-            # Embed all texts
-            embeddings = await embedding_service.embed_texts_with_batching(texts)
-            
-            # Check if we got the expected number of embeddings
-            if len(embeddings) != len(texts):
-                raise ValueError(f"Expected {len(texts)} embeddings, but got {len(embeddings)}")
-            
-            # Create documents
+            # Create documents without embeddings - Weaviate will generate them natively
             documents = []
-            for i, (text, embedding) in enumerate(zip(texts, embeddings)):
+            for i, text in enumerate(texts):
                 metadata = metadata_list[i] if metadata_list and i < len(metadata_list) else {}
                 document = VectorDocument(
                     id=f"doc_{int(time.time())}_{i}",
                     text=text,
-                    embedding=embedding,
+                    embedding=None,  # No embedding needed - Weaviate handles this
                     metadata=metadata
                 )
                 documents.append(document)
@@ -297,7 +289,7 @@ class VectorService:
             job.updated_at = time.time()
             
             processing_time = (time.time() - start_time) * 1000
-            logger.info(f"Bulk upsert completed in {processing_time:.2f}ms")
+            logger.info(f"Bulk upsert with native embedding completed in {processing_time:.2f}ms")
             
             return result
             
@@ -308,7 +300,7 @@ class VectorService:
             job.updated_at = time.time()
             
             processing_time = (time.time() - start_time) * 1000
-            logger.error(f"Failed to bulk upsert in {processing_time:.2f}ms: {str(e)}")
+            logger.error(f"Failed to bulk upsert with native embedding in {processing_time:.2f}ms: {str(e)}")
             raise
     
     async def list_indexes(self) -> List[IndexConfig]:

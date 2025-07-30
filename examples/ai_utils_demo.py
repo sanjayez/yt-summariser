@@ -14,7 +14,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from ai_utils.config import get_config
-from ai_utils.providers import OpenAIEmbeddingProvider, PineconeVectorStoreProvider, OpenAILLMProvider
+from ai_utils.providers import OpenAIEmbeddingProvider, WeaviateVectorStoreProvider, OpenAILLMProvider
 from ai_utils.services import EmbeddingService, VectorService, LLMService
 from ai_utils.models import (
     VectorDocument, VectorQuery, RAGQuery, 
@@ -37,7 +37,7 @@ async def main():
         
         # Initialize providers
         embedding_provider = OpenAIEmbeddingProvider(config=config)
-        vector_provider = PineconeVectorStoreProvider(config=config)
+        vector_provider = WeaviateVectorStoreProvider(config=config)
         llm_provider = OpenAILLMProvider(config=config)
         
         # Initialize services

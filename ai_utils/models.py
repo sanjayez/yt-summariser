@@ -62,7 +62,7 @@ class VectorDocument(BaseModel):
     """Model for vector store documents"""
     id: str = Field(..., description="Unique document identifier")
     text: str = Field(..., description="Document text content")
-    embedding: List[float] = Field(..., description="Document embedding vector")
+    embedding: Optional[List[float]] = Field(None, description="Document embedding vector (optional with native vectorization)")
     metadata: Dict[str, Any] = Field(default_factory=dict, description="Document metadata")
     created_at: datetime = Field(default_factory=datetime.now, description="Document creation timestamp")
     

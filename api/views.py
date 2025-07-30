@@ -11,9 +11,100 @@ import json
 import time
 import asyncio
 import logging
+from functools import lru_cache
+from django.core.cache import cache
 from video_processor.config import API_CONFIG
 
 logger = logging.getLogger(__name__)
+
+# Context Compression for Performance Optimization
+def compress_context(results, max_chars=600):
+    """
+    Compress context to reduce LLM processing time while preserving meaningful content.
+    Expected savings: ~500ms-1s due to optimized token count.
+    """
+    compressed = []
+    char_count = 0
+    
+    # Sort by score and process highest relevance first
+    sorted_results = sorted(results, key=lambda x: x['score'], reverse=True)
+    
+    for result in sorted_results:
+        # Get meaningful text from the segment
+        text = result['text']
+        
+        # Clean and extract meaningful content
+        if "(from:" in text:
+            # Remove the truncated suffix like "(from: TOP 10 HIDDEN..."
+            text = text.split("(from:")[0].strip()
+        
+        # Ensure minimum meaningful length
+        if len(text) < 20:
+            continue
+            
+        # Moderate truncation for very long segments
+        if len(text) > 250:
+            text = text[:247] + "..."
+        
+        # Format with timestamp for context
+        if result['type'] == 'segment' and 'start_time' in result['metadata']:
+            timestamp = result['metadata']['start_time']
+            minutes = int(timestamp // 60)
+            seconds = int(timestamp % 60)
+            time_str = f"{minutes:02d}:{seconds:02d}"
+            segment = f"[{time_str}] {text}"
+        else:
+            segment = text
+        
+        # Check if adding this segment would exceed limit
+        if char_count + len(segment) + 2 > max_chars:  # +2 for \n
+            break
+            
+        compressed.append(segment)
+        char_count += len(segment) + 2
+    
+    return "\n".join(compressed)
+
+# Embedding Cache for Performance Optimization
+def get_cached_embedding(question):
+    """Cache embeddings for frequently asked questions."""
+    cache_key = f"embedding_{hash(question.lower().strip())}"
+    return cache.get(cache_key)
+
+def cache_embedding(question, embedding):
+    """Cache embedding for future use (1 hour TTL)."""
+    cache_key = f"embedding_{hash(question.lower().strip())}"
+    cache.set(cache_key, embedding, 3600)  # 1 hour cache
+
+# Service Singleton Cache for Performance Optimization
+@lru_cache(maxsize=1)
+def get_rag_services():
+    """
+    Initialize and cache RAG services for performance optimization.
+    This avoids recreating providers on every request (~150-200ms savings).
+    """
+    from ai_utils.services.vector_service import VectorService
+    from ai_utils.providers.gemini_llm import GeminiLLMProvider
+    from ai_utils.providers.weaviate_store import WeaviateVectorStoreProvider
+    from ai_utils.services.llm_service import LLMService
+    from ai_utils.config import get_config
+    
+    logger.info("🚀 Initializing cached RAG services...")
+    config = get_config()
+    
+    # Initialize providers once - using Gemini and native Weaviate embeddings for optimized performance
+    vector_provider = WeaviateVectorStoreProvider(config)
+    llm_provider = GeminiLLMProvider(config=config)
+    
+    # Initialize services once - no embedding service needed with native vectorization
+    services = {
+        'vector': VectorService(provider=vector_provider),
+        'llm': LLMService(provider=llm_provider),
+        'config': config
+    }
+    
+    logger.info("✅ RAG services cached successfully")
+    return services
 
 @api_view(['POST'])
 def process_single_video(request):
@@ -169,35 +260,33 @@ async def search_video_content_async(question: str, video_metadata, transcript) 
     Smart search strategy: start with metadata/summary, then search segments if needed.
     Returns search results with sources and confidence.
     """
+    import time
+    
+    # Simple timing dictionary
+    stage_timings = {}
+    
     try:
-        from ai_utils.services.vector_service import VectorService
-        from ai_utils.services.embedding_service import EmbeddingService
-        from ai_utils.providers.openai_llm import OpenAILLMProvider
-        from ai_utils.providers.pinecone_store import PineconeVectorStoreProvider
-        from ai_utils.providers.openai_embeddings import OpenAIEmbeddingProvider
-        from ai_utils.services.llm_service import LLMService
-        from ai_utils.models import VectorQuery, ChatMessage, ChatRequest
-        from ai_utils.config import get_config
+        from ai_utils.models import ChatMessage, ChatRequest
         
-        config = get_config()
-        embedding_provider = OpenAIEmbeddingProvider(config)
-        embedding_service = EmbeddingService(provider=embedding_provider)
-        vector_provider = PineconeVectorStoreProvider(config)
-        vector_service = VectorService(provider=vector_provider)
-        llm_provider = OpenAILLMProvider(config=config)
-        llm_service = LLMService(provider=llm_provider)
+        # TIMING POINT 1: Service Initialization
+        t1_start = time.time()
+        services = get_rag_services()
+        vector_service = services['vector']
+        llm_service = services['llm']
+        config = services['config']
         video_id = video_metadata.video_id
+        stage_timings['1_SERVICE_INIT'] = (time.time() - t1_start) * 1000
         
         all_sources = []
         search_results = []
         
-        # Search video segments (the main content that's embedded)
+        # TIMING POINT 2: Vector Search (includes embedding + search)
+        t2_start = time.time()
         try:
             logger.info(f"🔍 Starting vector search for video {video_id} with question: '{question}'")
             
             segments_results = await vector_service.search_by_text(
                 text=question,
-                embedding_service=embedding_service,
                 top_k=5,
                 filters={'video_id': video_id, 'type': 'segment'}
             )
@@ -222,65 +311,138 @@ async def search_video_content_async(question: str, video_metadata, transcript) 
             import traceback
             logger.error(f"🔍 Full traceback: {traceback.format_exc()}")
         
+        stage_timings['2_VECTOR_SEARCH_TOTAL'] = (time.time() - t2_start) * 1000
+        
+        # TIMING POINT 3: Context Processing
+        t3_start = time.time()
         # Sort by relevance score and take top 3
         search_results.sort(key=lambda x: x['score'], reverse=True)
         top_results = search_results[:3]
         
-        # Prepare sources for LLM context
-        context_parts = []
+        # Use compressed context for faster LLM processing
+        compressed_context = compress_context(top_results, max_chars=800)
+        
+        # Prepare sources for response (detailed version for user)
         for result in top_results:
-            if result['type'] == 'metadata':
-                context_parts.append(f"Video Info: {result['text']}")
-            elif result['type'] == 'summary':
-                context_parts.append(f"Summary: {result['text']}")
-            elif result['type'] == 'segment':
+            if result['type'] == 'segment':
                 timestamp = result['metadata'].get('start_time', 0)
                 minutes = int(timestamp // 60)
                 seconds = int(timestamp % 60)
                 time_str = f"{minutes:02d}:{seconds:02d}"
-                context_parts.append(f"[{time_str}] {result['text']}")
                 
-                # Add to sources for response
+                # Clean text for sources (remove timestamp if present)
+                clean_text = result['text']
+                if clean_text.startswith(f"[{time_str}]"):
+                    clean_text = clean_text.replace(f"[{time_str}]", "").strip()
+                
                 all_sources.append({
                     'type': 'segment',
                     'timestamp': time_str,
-                    'text': result['text'].replace(f"[{time_str}]", "").strip(),
+                    'text': clean_text,
                     'youtube_url': result['metadata'].get('youtube_url', ''),
                     'confidence': result['score']
                 })
         
-        # Generate answer using LLM
-        if context_parts:
-            context = "\n\n".join(context_parts)
-            
-            prompt = f"""Based on the following video content, please answer the user's question accurately and concisely.
+        stage_timings['3_CONTEXT_PROCESSING'] = (time.time() - t3_start) * 1000
+        
+        # Generate answer using LLM with Gemini/OpenAI fallback
+        if compressed_context and compressed_context.strip():
+            # Optimized prompt using actual context
+            prompt = f"""Based on this video content, answer the question concisely:
 
-Video Content:
-{context}
+{compressed_context}
 
 Question: {question}
-
-Please provide a helpful answer based on the video content. If the information isn't sufficient to answer the question, say so."""
+Answer:"""
             
             messages = [ChatMessage(role="user", content=prompt)]
-            chat_request = ChatRequest(messages=messages)
             
-            response_data = await llm_service.chat_completion(chat_request)
-            if response_data and response_data.get('response') and response_data['response'].choices:
-                answer = response_data['response'].choices[0].message.content
-            else:
+            # Try Gemini first, fallback to OpenAI
+            answer = None
+            
+            # TIMING POINT 4A: Gemini LLM Request
+            t4a_start = time.time()
+            try:
+                gemini_request = ChatRequest(
+                    messages=messages,
+                    model="gemini-2.5-flash",
+                    temperature=0.3,
+                    max_tokens=4000  # High limit to prevent MAX_TOKENS errors
+                )
+                
+                logger.info(f"🔍 Trying Gemini first...")
+                gemini_response = await services['llm'].provider.chat_completion(gemini_request)
+                if gemini_response and hasattr(gemini_response, 'choices') and gemini_response.choices:
+                    answer = gemini_response.choices[0].message.content.strip()
+                    logger.info(f"✅ Gemini success: {answer[:100]}...")
+                    stage_timings['4A_GEMINI_LLM'] = (time.time() - t4a_start) * 1000
+                else:
+                    raise Exception("Gemini returned no choices")
+                    
+            except Exception as gemini_error:
+                stage_timings['4A_GEMINI_LLM'] = (time.time() - t4a_start) * 1000
+                logger.warning(f"⚠️ Gemini failed: {gemini_error}, will try OpenAI fallback...")
+                
+                # TIMING POINT 4B: OpenAI Fallback
+                t4b_start = time.time()
+                try:
+                    from ai_utils.providers.openai_llm import OpenAILLMProvider
+                    openai_provider = OpenAILLMProvider(config=services['config'])
+                    
+                    openai_request = ChatRequest(
+                        messages=messages,
+                        model="gpt-3.5-turbo",
+                        temperature=0.3,
+                        max_tokens=2000  # Increased to prevent MAX_TOKENS errors
+                    )
+                    
+                    openai_response = await openai_provider.chat_completion(openai_request)
+                    if openai_response and hasattr(openai_response, 'choices') and openai_response.choices:
+                        answer = openai_response.choices[0].message.content.strip()
+                        logger.info(f"✅ OpenAI fallback success: {answer[:100]}...")
+                    else:
+                        logger.error(f"❌ OpenAI also returned no choices: {openai_response}")
+                        answer = "I couldn't generate an answer based on the available content."
+                        
+                    stage_timings['4B_OPENAI_FALLBACK'] = (time.time() - t4b_start) * 1000
+                        
+                except Exception as openai_error:
+                    stage_timings['4B_OPENAI_FALLBACK'] = (time.time() - t4b_start) * 1000
+                    logger.error(f"❌ Both providers failed. Gemini: {gemini_error}, OpenAI: {openai_error}")
+                    answer = "I couldn't generate an answer based on the available content."
+            
+            # Ensure we have an answer
+            if not answer:
                 answer = "I couldn't generate an answer based on the available content."
+                logger.warning("❌ No answer generated, using fallback")
             
+            # TIMING POINT 5: Response Assembly
+            t5_start = time.time()
             # Calculate overall confidence
             avg_confidence = sum(r['score'] for r in top_results) / len(top_results) if top_results else 0.0
             
-            return {
+            response = {
                 'answer': answer,
                 'sources': all_sources[:3],  # Top 3 sources
                 'confidence': round(avg_confidence, 2),
                 'search_method': 'vector_search',
                 'results_count': len(top_results)
             }
+            
+            stage_timings['5_RESPONSE_ASSEMBLY'] = (time.time() - t5_start) * 1000
+            
+            # Add comprehensive timing information to response
+            total_measured_time = sum(stage_timings.values())
+            response['timing'] = {
+                'stage_timings': stage_timings,
+                'total_time_ms': round(total_measured_time, 2),
+                'measured_stages': len(stage_timings)
+            }
+            
+            # Log timing summary for debugging
+            logger.debug(f"RAG pipeline completed in {total_measured_time:.2f}ms with {len(stage_timings)} stages")
+            
+            return response
         
         else:
             return {
@@ -288,11 +450,21 @@ Please provide a helpful answer based on the video content. If the information i
                 'sources': [],
                 'confidence': 0.0,
                 'search_method': 'vector_search',
-                'results_count': 0
+                'results_count': 0,
+                'timing': {
+                    'stage_timings': stage_timings,
+                    'total_time_ms': round(sum(stage_timings.values()), 2),
+                    'measured_stages': len(stage_timings)
+                }
             }
             
     except Exception as e:
         logger.error(f"Vector search failed: {e}")
+        
+        # Log any timing data we have so far
+        if 'stage_timings' in locals() and stage_timings:
+            logger.error(f"RAG pipeline error after {len(stage_timings)} stages")
+        
         raise
 
 def search_transcript_fallback(question: str, transcript_text: str, video_metadata) -> dict:
@@ -432,9 +604,24 @@ def ask_video_question(request, request_id):
         if video_metadata.is_embedded:
             try:
                 logger.info(f"Using vector search for question: {question}")
+                
+                # Time the entire async operation
+                import time
+                overall_start = time.time()
+                
                 search_result = asyncio.run(
                     search_video_content_async(question, video_metadata, transcript)
                 )
+                
+                overall_end = time.time()
+                total_elapsed_ms = (overall_end - overall_start) * 1000
+                
+                # Add timing to the result
+                if search_result:
+                    search_result['timing'] = {
+                        'total_time_ms': round(total_elapsed_ms, 2),
+                        'note': 'Total RAG pipeline execution time'
+                    }
             except Exception as e:
                 logger.warning(f"Vector search failed, falling back to transcript search: {e}")
                 search_result = None
