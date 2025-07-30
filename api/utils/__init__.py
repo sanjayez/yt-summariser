@@ -1,4 +1,5 @@
-from .performance_timer import RAGPerformanceTracker
+# API utilities - now using centralized telemetry package
+# Performance tracking moved to telemetry.timing module
 
-__all__ = ['RAGPerformanceTracker']
+__all__ = []
 

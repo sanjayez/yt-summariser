@@ -1,5 +1,7 @@
 from django.urls import path
-from .views import process_single_video, video_status_stream, get_video_summary, ask_video_question
+from .views.video_views import process_single_video, get_video_summary
+from .views.status_views import video_status_stream
+from .views.search_views import ask_video_question
 
 urlpatterns = [
     # Video processing endpoints
