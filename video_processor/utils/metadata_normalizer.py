@@ -31,6 +31,7 @@ class YouTubeMetadataNormalizer:
         'channel_name': {'max_length': 200, 'default': ''},
         'view_count': {'min_value': 0, 'default': 0},
         'like_count': {'min_value': 0, 'default': 0},
+        'comment_count': {'min_value': 0, 'default': 0},
         'channel_follower_count': {'min_value': 0, 'default': 0},
         'language': {'max_length': 12, 'default': 'fallback-en'},
         'channel_id': {'max_length': 50, 'default': ''},
@@ -39,6 +40,7 @@ class YouTubeMetadataNormalizer:
         'categories': {'max_items': 10, 'default': []},
         'thumbnail': {'default': ''},
         'channel_is_verified': {'default': False},
+        'engagement': {'default': []},
     }
     
     # Common language code mappings for normalization
@@ -106,7 +108,8 @@ class YouTubeMetadataNormalizer:
             'channel_name': raw_info.get('uploader'),
             'view_count': raw_info.get('view_count'),
             'like_count': raw_info.get('like_count'),
-            'channel_follower_count': raw_info.get('uploader_subscriber_count'),
+            'comment_count': raw_info.get('comment_count'),
+            'channel_follower_count': raw_info.get('channel_follower_count'),
             'language': raw_info.get('language'),
             'channel_id': raw_info.get('uploader_id'),
             'uploader_id': raw_info.get('uploader_id'),
@@ -115,6 +118,7 @@ class YouTubeMetadataNormalizer:
             'thumbnail': raw_info.get('thumbnail'),
             'channel_is_verified': raw_info.get('uploader_verified'),
             'upload_date': raw_info.get('upload_date'),
+            'engagement': cls._process_heatmap_segments(raw_info.get('heatmap', [])),
         }
     
     @classmethod
@@ -209,6 +213,19 @@ class YouTubeMetadataNormalizer:
         else:
             like_count = cls.FIELD_CONSTRAINTS['like_count']['default']
         metadata['like_count'] = like_count
+        
+        # Comment count normalization
+        comment_count = metadata.get('comment_count')
+        if comment_count is not None:
+            try:
+                comment_count = int(comment_count)
+                if comment_count < cls.FIELD_CONSTRAINTS['comment_count']['min_value']:
+                    comment_count = cls.FIELD_CONSTRAINTS['comment_count']['default']
+            except (ValueError, TypeError):
+                comment_count = cls.FIELD_CONSTRAINTS['comment_count']['default']
+        else:
+            comment_count = cls.FIELD_CONSTRAINTS['comment_count']['default']
+        metadata['comment_count'] = comment_count
         
         # Channel follower count normalization
         follower_count = metadata.get('channel_follower_count')
@@ -387,7 +404,7 @@ class YouTubeMetadataNormalizer:
                     raise ValueError(f"Field {field} exceeds maximum length {max_length}")
         
         # Validate numeric ranges
-        for field in ['duration', 'view_count', 'like_count', 'channel_follower_count']:
+        for field in ['duration', 'view_count', 'like_count', 'comment_count', 'channel_follower_count']:
             if field in metadata and metadata[field] is not None:
                 value = metadata[field]
                 constraints = cls.FIELD_CONSTRAINTS[field]
@@ -399,6 +416,96 @@ class YouTubeMetadataNormalizer:
                     raise ValueError(f"Field {field} above maximum value {constraints['max_value']}")
         
         logger.debug(f"Metadata validation passed for video {metadata.get('video_id')}")
+    
+    @staticmethod
+    def _process_heatmap_segments(heatmap_data):
+        """
+        Process heatmap data to extract high engagement segments
+        
+        Args:
+            heatmap_data: Raw heatmap data from yt-dlp (list of engagement points)
+            
+        Returns:
+            List of dictionaries with high engagement segments containing:
+            - start_time: Start time in seconds
+            - end_time: End time in seconds  
+            - value: Engagement value (> 0.95)
+            - timestamp_url: URL with timestamp parameter
+            
+        Raises:
+            ValueError: If heatmap_data format is invalid
+        """
+        # Handle edge cases
+        if not heatmap_data:
+            logger.debug("Empty heatmap data, returning empty segments list")
+            return []
+            
+        if not isinstance(heatmap_data, list):
+            logger.warning(f"Invalid heatmap data format: expected list, got {type(heatmap_data)}")
+            return []
+        
+        high_engagement_segments = []
+        
+        try:
+            for i, segment in enumerate(heatmap_data):
+                # Validate segment structure
+                if not isinstance(segment, dict):
+                    logger.warning(f"Skipping invalid segment at index {i}: expected dict, got {type(segment)}")
+                    continue
+                
+                # Extract engagement value
+                value = segment.get('value')
+                if value is None:
+                    logger.warning(f"Skipping segment at index {i}: missing 'value' field")
+                    continue
+                
+                try:
+                    value = float(value)
+                except (ValueError, TypeError):
+                    logger.warning(f"Skipping segment at index {i}: invalid value '{value}'")
+                    continue
+                
+                # Filter for high engagement (> 0.95)
+                if value > 0.95:
+                    # Extract time fields
+                    start_time = segment.get('start_time')
+                    end_time = segment.get('end_time')
+                    
+                    if start_time is None or end_time is None:
+                        logger.warning(f"Skipping high engagement segment at index {i}: missing time fields")
+                        continue
+                    
+                    try:
+                        start_time = float(start_time)
+                        end_time = float(end_time)
+                    except (ValueError, TypeError):
+                        logger.warning(f"Skipping segment at index {i}: invalid time values")
+                        continue
+                    
+                    # Validate time logic
+                    if start_time < 0 or end_time < 0 or start_time >= end_time:
+                        logger.warning(f"Skipping segment at index {i}: invalid time range {start_time}-{end_time}")
+                        continue
+                    
+                    # Generate timestamp URL
+                    timestamp_url = f"?t={int(start_time)}"
+                    
+                    high_engagement_segments.append({
+                        'start_time': start_time,
+                        'end_time': end_time,
+                        'value': value,
+                        'timestamp_url': timestamp_url
+                    })
+            
+            # Sort segments by start_time for consistent ordering
+            high_engagement_segments.sort(key=lambda x: x['start_time'])
+            
+            logger.debug(f"Processed {len(heatmap_data)} heatmap segments, found {len(high_engagement_segments)} high engagement segments")
+            return high_engagement_segments
+            
+        except Exception as e:
+            logger.error(f"Error processing heatmap segments: {e}")
+            return []
 
 
 def normalize_youtube_metadata(raw_info: Dict[str, Any]) -> Dict[str, Any]:

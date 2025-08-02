@@ -209,11 +209,107 @@ class VideoSummaryResponse(BaseModel):
     """Response schema for video summary endpoint"""
     summary: str = Field(..., description="AI-generated video summary")
     key_points: List[str] = Field(..., description="Key points from the video")
+    chapters: Optional[List[Dict[str, Any]]] = Field(None, description="Chapter-wise structured content")
     video_metadata: VideoMetadataResponse = Field(..., description="Video metadata")
     status: str = Field(..., description="Processing status")
     generated_at: Optional[str] = Field(None, description="Summary generation timestamp in ISO format")
     summary_length: int = Field(..., description="Length of summary in characters")
     key_points_count: int = Field(..., description="Number of key points")
+    
+    @field_validator('summary', mode='before')
+    @classmethod
+    def validate_summary(cls, v):
+        """Validate and clean summary text"""
+        if v is None:
+            return ""
+        summary_text = str(v).strip()
+        # Ensure summary is not too long (reasonable limit)
+        if len(summary_text) > 10000:
+            return summary_text[:9997] + "..."
+        return summary_text
+    
+    @field_validator('key_points', mode='before')
+    @classmethod 
+    def validate_key_points(cls, v):
+        """Ensure key_points is always a list of strings
+        
+        TODO: Simplify this validation once LLM returns consistent JSON format
+        """
+        if v is None:
+            return []
+        if not isinstance(v, list):
+            # Try to convert to list
+            try:
+                if isinstance(v, str):
+                    import json
+                    parsed = json.loads(v)
+                    if isinstance(parsed, list):
+                        v = parsed
+                    else:
+                        return [str(v)]
+                else:
+                    return [str(v)]
+            except:
+                return [str(v)]
+        
+        # Clean and validate each item
+        cleaned_points = []
+        for item in v:
+            if item is not None:
+                str_item = str(item).strip()
+                if str_item and str_item != "None":
+                    # Limit length of individual key points
+                    if len(str_item) > 500:
+                        str_item = str_item[:497] + "..."
+                    cleaned_points.append(str_item)
+        
+        return cleaned_points
+    
+    @field_validator('chapters', mode='before')
+    @classmethod
+    def validate_chapters(cls, v):
+        """Validate chapters structure
+        
+        TODO: Remove complex validation after fixing chapter response format
+        """
+        if v is None or not v:
+            return None
+        
+        if not isinstance(v, list):
+            return None
+        
+        validated_chapters = []
+        for i, chapter in enumerate(v):
+            if not isinstance(chapter, dict):
+                continue
+                
+            # Ensure required fields exist with reasonable defaults
+            validated_chapter = {
+                "chapter": chapter.get("chapter", i + 1),
+                "title": str(chapter.get("title", f"Chapter {i + 1}")).strip(),
+                "summary": str(chapter.get("summary", "")).strip()
+            }
+            
+            # Validate types and lengths
+            if not validated_chapter["title"]:
+                validated_chapter["title"] = f"Chapter {i + 1}"
+            elif len(validated_chapter["title"]) > 300:
+                validated_chapter["title"] = validated_chapter["title"][:297] + "..."
+                
+            if not validated_chapter["summary"]:
+                validated_chapter["summary"] = "No summary available"
+            elif len(validated_chapter["summary"]) > 2000:
+                validated_chapter["summary"] = validated_chapter["summary"][:1997] + "..."
+                
+            # Ensure chapter number is valid
+            try:
+                validated_chapter["chapter"] = int(validated_chapter["chapter"])
+            except (ValueError, TypeError):
+                validated_chapter["chapter"] = i + 1
+                
+            validated_chapters.append(validated_chapter)
+        
+        return validated_chapters if validated_chapters else None
     
     @field_validator('generated_at', mode='before')
     @classmethod

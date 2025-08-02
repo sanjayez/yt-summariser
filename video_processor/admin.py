@@ -5,10 +5,10 @@ from .models import VideoMetadata, VideoTranscript, TranscriptSegment, VideoExcl
 
 @admin.register(VideoMetadata)
 class VideoMetadataAdmin(admin.ModelAdmin):
-    list_display = ['video_id', 'title', 'channel_name', 'duration', 'view_count', 'like_count', 'language', 'upload_date', 'channel_is_verified', 'status', 'created_at']
+    list_display = ['video_id', 'title', 'channel_name', 'duration', 'view_count', 'like_count', 'comment_count', 'language', 'upload_date', 'channel_is_verified', 'status', 'created_at']
     list_filter = ['status', 'language', 'channel_is_verified', 'upload_date', 'created_at']
     search_fields = ['video_id', 'title', 'channel_name', 'channel_id', 'uploader_id']
-    readonly_fields = ['created_at', 'duration_string', 'webpage_url']
+    readonly_fields = ['created_at', 'duration_string', 'webpage_url', 'engagement_preview']
     
     fieldsets = (
         ('Basic Info', {
@@ -18,7 +18,7 @@ class VideoMetadataAdmin(admin.ModelAdmin):
             'fields': ('channel_name', 'channel_id', 'uploader_id', 'channel_follower_count', 'channel_is_verified')
         }),
         ('Engagement', {
-            'fields': ('view_count', 'like_count')
+            'fields': ('view_count', 'like_count', 'comment_count', 'engagement', 'engagement_preview')
         }),
         ('Media', {
             'fields': ('thumbnail', 'webpage_url')
@@ -30,6 +30,34 @@ class VideoMetadataAdmin(admin.ModelAdmin):
             'fields': ('status', 'created_at')
         }),
     )
+    
+    def engagement_preview(self, obj):
+        """Display engagement segments in a readable format"""
+        if not obj.engagement:
+            return "No high engagement segments"
+        
+        segments = obj.engagement
+        if not isinstance(segments, list) or len(segments) == 0:
+            return "No high engagement segments"
+        
+        preview = []
+        for segment in segments[:3]:  # Show first 3 segments
+            if isinstance(segment, dict):
+                start = segment.get('start_time', 0)
+                end = segment.get('end_time', 0) 
+                value = segment.get('value', 0)
+                start_min = int(start // 60)
+                start_sec = int(start % 60)
+                end_min = int(end // 60)
+                end_sec = int(end % 60)
+                preview.append(f"{start_min:02d}:{start_sec:02d}-{end_min:02d}:{end_sec:02d} ({value:.2f})")
+        
+        result = "; ".join(preview)
+        if len(segments) > 3:
+            result += f"... (+{len(segments)-3} more)"
+        
+        return result
+    engagement_preview.short_description = 'High Engagement Segments (>95%)'
 
 @admin.register(VideoTranscript)
 class VideoTranscriptAdmin(admin.ModelAdmin):

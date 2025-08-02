@@ -167,6 +167,8 @@ def extract_video_metadata(self, url_request_id):
                 channel_follower_count=metadata['channel_follower_count'],
                 channel_is_verified=metadata['channel_is_verified'],
                 uploader_id=metadata['uploader_id'],
+                comment_count=metadata['comment_count'],
+                engagement=metadata['engagement'],
                 url_request=url_request,
                 status='success'
             )

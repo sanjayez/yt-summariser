@@ -62,6 +62,7 @@ class VideoMetadata(models.Model):
     upload_date = models.DateField(null=True, blank=True, help_text="When video was published")
     language = models.CharField(max_length=12, null=True, blank=True, default='en', help_text="Primary language of the video")
     like_count = models.BigIntegerField(null=True, blank=True, help_text="Number of likes")
+    comment_count = models.BigIntegerField(null=True, blank=True, help_text="Number of comments")
     channel_id = models.CharField(max_length=50, blank=True, help_text="YouTube channel ID")
     tags = models.JSONField(default=list, blank=True, help_text="Video tags for categorization")
     categories = models.JSONField(default=list, blank=True, help_text="YouTube categories")
@@ -72,6 +73,7 @@ class VideoMetadata(models.Model):
     
     # Vector embedding tracking
     is_embedded = models.BooleanField(default=False, help_text="Whether video metadata has been embedded in vector store")
+    engagement = models.JSONField(default=list, blank=True, help_text="High engagement segments (>95% from heatmap)")
     
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='processing')
     created_at = models.DateTimeField(auto_now_add=True)
@@ -106,6 +108,7 @@ class VideoMetadata(models.Model):
             models.Index(fields=['channel_id']),  # For channel-based filtering
             models.Index(fields=['language']),  # For language-based filtering
             models.Index(fields=['is_embedded']),  # For vector embedding tracking
+            models.Index(fields=['comment_count']),  # For engagement-based queries
         ]
 
 class VideoTranscript(models.Model):

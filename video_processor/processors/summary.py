@@ -9,6 +9,7 @@ from celery_progress.backend import ProgressRecorder
 from django.db import transaction
 import logging
 import json
+import re
 import asyncio  # Move import to top to avoid scope issues
 import time
 
@@ -27,54 +28,258 @@ from ai_utils.config import AIConfig
 
 logger = logging.getLogger(__name__)
 
-def extract_key_points_from_summary(summary_text: str) -> list:
+def extract_key_points_from_summary(structured_response: str) -> list:
     """
-    Extract key points from summary text using simple heuristics.
-    Looks for bullet points, numbered lists, or sentence breaks.
+    Extract structured chapters from LLM response with robust fallback parsing.
+    Tries multiple parsing strategies to extract useful content.
+    
+    TODO: Simplify this to single parsing strategy once LLM responses are more consistent
     """
     try:
-        key_points = []
+        # Strategy 1: Look for CHAPTERS: section
+        if "CHAPTERS:" in structured_response:
+            chapters_section = structured_response.split("CHAPTERS:")[1].strip()
+            
+            # Try to parse as JSON
+            try:
+                chapters_json = json.loads(chapters_section)
+                if isinstance(chapters_json, list) and len(chapters_json) > 0:
+                    logger.info(f"Successfully parsed {len(chapters_json)} chapters from CHAPTERS: section")
+                    return chapters_json
+            except json.JSONDecodeError:
+                logger.warning("Failed to parse CHAPTERS section as JSON, trying cleanup")
+                # Try to clean up the JSON and parse again
+                cleaned_json = _cleanup_json_string(chapters_section)
+                try:
+                    chapters_json = json.loads(cleaned_json)
+                    if isinstance(chapters_json, list) and len(chapters_json) > 0:
+                        logger.info(f"Successfully parsed {len(chapters_json)} chapters after JSON cleanup")
+                        return chapters_json
+                except json.JSONDecodeError:
+                    logger.warning("JSON cleanup failed, trying text extraction")
         
-        # Split by common bullet point patterns
-        lines = summary_text.split('\n')
-        for line in lines:
-            line = line.strip()
-            if not line:
-                continue
-                
-            # Check for bullet points or numbered lists
-            if (line.startswith('•') or line.startswith('-') or 
-                line.startswith('*') or line.startswith('→') or
-                (len(line) > 3 and line[0].isdigit() and line[1:3] in ['. ', ') ', '- '])):
-                
-                # Clean up the bullet point
-                clean_point = line
-                for prefix in ['•', '-', '*', '→']:
-                    if clean_point.startswith(prefix):
-                        clean_point = clean_point[1:].strip()
-                        break
-                
-                # Remove numbered list prefixes
-                if clean_point and clean_point[0].isdigit():
-                    parts = clean_point.split(' ', 1)
-                    if len(parts) > 1:
-                        clean_point = parts[1].strip()
-                
-                if clean_point and len(clean_point) > 10:  # Minimum length for meaningful point
-                    key_points.append(clean_point)
+        # Strategy 2: Look for any JSON array in the response
+        json_arrays = _extract_json_arrays(structured_response)
+        for json_array in json_arrays:
+            if len(json_array) > 0 and isinstance(json_array[0], dict):
+                # Check if it looks like chapters (has title, summary, etc.)
+                if any(key in json_array[0] for key in ['title', 'summary', 'chapter']):
+                    logger.info(f"Found {len(json_array)} chapters via JSON array extraction")
+                    return json_array
         
-        # If no bullet points found, try to extract from sentences
-        if not key_points and summary_text:
-            sentences = summary_text.split('. ')
-            # Take the most informative sentences (avoid very short ones)
-            key_points = [s.strip() + '.' for s in sentences if len(s.strip()) > 20][:5]
+        # Strategy 3: Extract chapters from numbered sections in text
+        text_chapters = _extract_chapters_from_text(structured_response)
+        if text_chapters:
+            logger.info(f"Extracted {len(text_chapters)} chapters from text structure")
+            return text_chapters
         
-        # Limit to reasonable number of key points
-        return key_points[:8]
+        # Strategy 4: Create single chapter from entire response if it contains useful content
+        if len(structured_response.strip()) > 50:  # Has substantial content
+            fallback_chapter = {
+                "chapter": 1,
+                "title": "Video Summary",
+                "summary": structured_response.strip()[:500] + ("..." if len(structured_response) > 500 else "")
+            }
+            logger.info("Created fallback single chapter from response content")
+            return [fallback_chapter]
+        
+        # Final fallback: return empty array
+        logger.warning("Could not extract any chapters from response")
+        return []
         
     except Exception as e:
-        logger.error(f"Error extracting key points: {e}")
+        logger.error(f"Error parsing structured response: {e}")
         return []
+
+def _cleanup_json_string(json_str: str) -> str:
+    """Clean up common JSON formatting issues from LLM responses."""
+    # Remove common prefixes/suffixes
+    json_str = json_str.strip()
+    
+    # Remove markdown code blocks
+    if json_str.startswith('```json'):
+        json_str = json_str[7:]
+    if json_str.startswith('```'):
+        json_str = json_str[3:]
+    if json_str.endswith('```'):
+        json_str = json_str[:-3]
+    
+    # Find the first [ and last ]
+    start_idx = json_str.find('[')
+    end_idx = json_str.rfind(']')
+    
+    if start_idx != -1 and end_idx != -1 and end_idx > start_idx:
+        json_str = json_str[start_idx:end_idx+1]
+    
+    return json_str.strip()
+
+def _extract_json_arrays(text: str) -> list:
+    """Extract all JSON arrays from text, even if embedded in other content."""
+    arrays = []
+    
+    # Find all potential JSON arrays
+    start_indices = [i for i, char in enumerate(text) if char == '[']
+    
+    for start_idx in start_indices:
+        # Find matching closing bracket
+        bracket_count = 0
+        for end_idx in range(start_idx, len(text)):
+            if text[end_idx] == '[':
+                bracket_count += 1
+            elif text[end_idx] == ']':
+                bracket_count -= 1
+                if bracket_count == 0:
+                    # Found complete array
+                    try:
+                        json_str = text[start_idx:end_idx+1]
+                        parsed = json.loads(json_str)
+                        if isinstance(parsed, list):
+                            arrays.append(parsed)
+                    except json.JSONDecodeError:
+                        continue
+                    break
+    
+    return arrays
+
+def _extract_chapters_from_text(text: str) -> list:
+    """Extract chapters from text using common numbering patterns."""
+    chapters = []
+    
+    # Look for numbered sections (1., 2., Chapter 1, etc.)
+    
+    # Pattern for numbered sections
+    patterns = [
+        r'(?:^|\n)\s*(\d+)\.?\s*([^\n]+)\n(.*?)(?=(?:\n\s*\d+\.|\Z))',
+        r'(?:^|\n)\s*(?:Chapter|Section)\s+(\d+):?\s*([^\n]+)\n(.*?)(?=(?:\n\s*(?:Chapter|Section)\s+\d+|\Z))',
+        r'(?:^|\n)\s*##\s*(\d+)\.?\s*([^\n]+)\n(.*?)(?=(?:\n\s*##\s*\d+|\Z))'
+    ]
+    
+    for pattern in patterns:
+        matches = re.findall(pattern, text, re.MULTILINE | re.DOTALL)
+        if matches:
+            for i, (num, title, content) in enumerate(matches):
+                chapters.append({
+                    "chapter": int(num) if num.isdigit() else i + 1,
+                    "title": title.strip(),
+                    "summary": content.strip()[:300] + ("..." if len(content.strip()) > 300 else "")
+                })
+            break  # Use first successful pattern
+    
+    return chapters
+
+def _parse_llm_response_robust(structured_response: str) -> tuple:
+    """
+    Robust parsing of LLM response with multiple fallback strategies.
+    Returns (executive_summary, chapters) tuple.
+    
+    TODO: Replace with simple JSON parsing once LLM prompt is improved
+    """
+    try:
+        logger.info(f"Parsing LLM response ({len(structured_response)} chars)")
+        
+        # Strategy 1: Perfect structured format (EXECUTIVE SUMMARY: + CHAPTERS:)
+        if "EXECUTIVE SUMMARY:" in structured_response and "CHAPTERS:" in structured_response:
+            try:
+                parts = structured_response.split("CHAPTERS:")
+                executive_summary = parts[0].replace("EXECUTIVE SUMMARY:", "").strip()
+                
+                # Extract chapters using the robust function
+                chapters = extract_key_points_from_summary(structured_response)
+                
+                if executive_summary and len(executive_summary.strip()) > 10:
+                    logger.info("Successfully parsed structured response (perfect format)")
+                    return executive_summary, chapters
+                    
+            except Exception as e:
+                logger.warning(f"Perfect format parsing failed: {e}, trying fallbacks")
+        
+        # Strategy 2: Look for EXECUTIVE SUMMARY section only
+        if "EXECUTIVE SUMMARY:" in structured_response:
+            try:
+                # Extract everything after "EXECUTIVE SUMMARY:"
+                summary_part = structured_response.split("EXECUTIVE SUMMARY:")[1]
+                
+                # If there's a CHAPTERS section, stop at it
+                if "CHAPTERS:" in summary_part:
+                    executive_summary = summary_part.split("CHAPTERS:")[0].strip()
+                else:
+                    executive_summary = summary_part.strip()
+                
+                # Extract chapters (will use fallback methods if needed)
+                chapters = extract_key_points_from_summary(structured_response)
+                
+                if executive_summary and len(executive_summary.strip()) > 10:
+                    logger.info("Successfully parsed executive summary section")
+                    return executive_summary, chapters
+                    
+            except Exception as e:
+                logger.warning(f"Executive summary parsing failed: {e}")
+        
+        # Strategy 3: Look for chapters first, use rest as summary
+        chapters = extract_key_points_from_summary(structured_response)
+        if chapters:
+            # Remove the chapters section from response to get summary
+            executive_summary = structured_response
+            
+            # Remove CHAPTERS: section if present
+            if "CHAPTERS:" in executive_summary:
+                executive_summary = executive_summary.split("CHAPTERS:")[0]
+            
+            # Remove EXECUTIVE SUMMARY: prefix if present
+            if "EXECUTIVE SUMMARY:" in executive_summary:
+                executive_summary = executive_summary.replace("EXECUTIVE SUMMARY:", "")
+            
+            executive_summary = executive_summary.strip()
+            
+            # If summary is too short, use first chapter summary or response beginning
+            if len(executive_summary.strip()) < 20:
+                if chapters and chapters[0].get('summary'):
+                    executive_summary = chapters[0]['summary'][:200] + "..."
+                else:
+                    executive_summary = structured_response[:200] + "..."
+            
+            logger.info(f"Extracted summary using chapters-first strategy")
+            return executive_summary, chapters
+        
+        # Strategy 4: Use entire response as summary, create basic chapters
+        if len(structured_response.strip()) > 50:
+            # Use first part as executive summary
+            lines = structured_response.strip().split('\n')
+            
+            # Try to find a good summary (first substantial paragraph)
+            executive_summary = ""
+            for line in lines:
+                if len(line.strip()) > 30:  # Substantial line
+                    executive_summary = line.strip()
+                    break
+            
+            # If no good line found, use first 200 chars
+            if not executive_summary:
+                executive_summary = structured_response.strip()[:200] + "..."
+            
+            # Create single chapter from full response
+            chapters = [{
+                "chapter": 1,
+                "title": "Video Summary",
+                "summary": structured_response.strip()
+            }]
+            
+            logger.info("Used entire response as summary with single chapter")
+            return executive_summary, chapters
+        
+        # Strategy 5: Minimal fallback for very short responses
+        if len(structured_response.strip()) > 10:
+            logger.warning("Using minimal fallback for short response")
+            return structured_response.strip(), []
+        
+        # Final fallback: Empty response handling
+        logger.error("Response too short or empty, using error message")
+        return "Summary generation produced insufficient content", []
+        
+    except Exception as e:
+        logger.error(f"All parsing strategies failed: {e}")
+        # Last resort: return whatever we can
+        return structured_response[:200] if structured_response else "Parsing failed", []
 
 def create_summary_prompt(transcript_text: str, video_metadata=None) -> str:
     """
@@ -82,14 +287,30 @@ def create_summary_prompt(transcript_text: str, video_metadata=None) -> str:
     """
     try:
         # Base prompt
-        prompt = """You are an expert at summarizing video content. Please provide a comprehensive summary of the following video transcript.
+        prompt = """You are an expert at analyzing video content. Please provide:
 
-Instructions:
-1. Create a clear, concise summary (200-400 words)
-2. Focus on the main topics, key insights, and important information
-3. Use bullet points for key takeaways
-4. Maintain the original context and meaning
-5. Make it engaging and informative
+1. EXECUTIVE SUMMARY (2-3 sentences): High-level overview of the video's main theme
+
+2. CHAPTERS (JSON array): Break the content into logical chapters
+
+Format your response EXACTLY like this:
+
+EXECUTIVE SUMMARY:
+[Your 2-3 sentence summary here]
+
+CHAPTERS:
+[
+  {
+    "chapter": 1,
+    "title": "Chapter Name",
+    "summary": "Detailed explanation of this chapter's content..."
+  },
+  {
+    "chapter": 2,
+    "title": "Another Chapter",
+    "summary": "Another detailed explanation..."
+  }
+]
 
 """
         
@@ -126,6 +347,7 @@ def generate_summary_sync(transcript_text: str, video_metadata=None) -> tuple:
         llm_provider = OpenAILLMProvider(config)
         llm_service = LLMService(llm_provider)
         
+        # TODO: Simplify chunking logic - current complexity handles LLM API instability
         # Enhanced chunking for very long transcripts (like 26+ minute videos)
         if len(transcript_text) > 15000:  # More aggressive chunking for stability
             logger.info(f"Long transcript detected ({len(transcript_text)} chars), using enhanced chunking")
@@ -217,7 +439,14 @@ Create a unified, well-structured summary with key points. Focus on the main the
                         )
                     )
                     if final_response_data and final_response_data.get('response') and final_response_data['response'].choices:
-                        summary_text = final_response_data['response'].choices[0].message.content
+                        structured_response = final_response_data['response'].choices[0].message.content
+                        
+                        # Try to parse structured response for chunks too
+                        if "EXECUTIVE SUMMARY:" in structured_response and "CHAPTERS:" in structured_response:
+                            parts = structured_response.split("CHAPTERS:")
+                            summary_text = parts[0].replace("EXECUTIVE SUMMARY:", "").strip()
+                        else:
+                            summary_text = structured_response
                     else:
                         summary_text = combined_summary
                 finally:
@@ -226,6 +455,16 @@ Create a unified, well-structured summary with key points. Focus on the main the
                 # Fallback: create a basic summary if all chunks failed
                 logger.warning("All chunks failed, creating fallback summary")
                 summary_text = f"Summary of {video_metadata.title if video_metadata else 'video'}: Content processing encountered issues. Video contains {len(transcript_text)} characters of transcript data."
+                
+            # For chunked processing, use robust parsing for any response format
+            executive_summary, chapters = _parse_llm_response_robust(summary_text)
+            
+            # Validate and clean up executive summary
+            executive_summary = validate_embedding_text(executive_summary, max_length=2000)
+            
+            logger.info(f"Chunked summary parsing completed: exec summary {len(executive_summary)} chars, {len(chapters)} chapters")
+            
+            return executive_summary, chapters
                 
         else:
             # Direct summarization for shorter transcripts
@@ -255,17 +494,17 @@ Create a unified, well-structured summary with key points. Focus on the main the
             if not response_data or not response_data.get('response') or not response_data['response'].choices:
                 raise ValueError("Failed to generate summary from LLM")
             
-            summary_text = response_data['response'].choices[0].message.content
+            structured_response = response_data['response'].choices[0].message.content
         
-        # Extract key points from summary
-        key_points = extract_key_points_from_summary(summary_text)
+        # Parse executive summary and chapters with robust fallback logic
+        executive_summary, chapters = _parse_llm_response_robust(structured_response)
         
-        # Validate and clean up summary
-        summary_text = validate_embedding_text(summary_text, max_length=2000)
+        # Validate and clean up executive summary
+        executive_summary = validate_embedding_text(executive_summary, max_length=2000)
         
-        logger.info(f"Summary generation completed: {len(summary_text)} chars, {len(key_points)} key points")
+        logger.info(f"Summary parsing completed: exec summary {len(executive_summary)} chars, {len(chapters)} chapters")
         
-        return summary_text, key_points
+        return executive_summary, chapters
         
     except Exception as e:
         logger.error(f"Error in sync summary generation: {e}")
@@ -391,7 +630,8 @@ def generate_video_summary(self, transcript_result, url_request_id):
     except Exception as e:
         logger.error(f"Summary generation failed for request {url_request_id}: {e}")
         
-        # Mark transcript summary as failed but don't stop the chain
+                    # TODO: Consider cleaner error handling once LLM reliability improves
+            # Mark transcript summary as failed but don't stop the chain
         try:
             with transaction.atomic():
                 if not url_request:
