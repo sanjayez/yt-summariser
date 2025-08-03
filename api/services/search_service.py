@@ -109,7 +109,7 @@ class SearchService:
     
     async def _perform_vector_search(self, question: str, video_id: str, services: Dict[str, Any]) -> List[Dict[str, Any]]:
         """
-        Perform vector search for the question against video content.
+        Perform dual vector search: transcript chunks for context + segments for navigation.
         
         Args:
             question: User's question
@@ -117,34 +117,82 @@ class SearchService:
             services: Initialized AI services
             
         Returns:
-            List of search results
+            List of search results with both chunks and segments
         """
         search_results = []
         
         try:
-            self.logger.info(f"🔍 Starting vector search for video {video_id} with question: '{question}'")
+            self.logger.info(f"🔍 Starting dual vector search for video {video_id} with question: '{question}'")
             
             vector_service = services['vector']
+            
+            # Primary search: Transcript chunks for coherent context
+            self.logger.info(f"🔍 Searching transcript chunks...")
+            chunks_results = await vector_service.search_by_text(
+                text=question,
+                top_k=5,  # More chunks for better keyword coverage
+                filters={'video_id': video_id, 'type': 'transcript_chunk'}
+            )
+            
+            # Secondary search: Segments for precise navigation
+            self.logger.info(f"🔍 Searching segments...")
             segments_results = await vector_service.search_by_text(
                 text=question,
-                top_k=5,
+                top_k=5,  # More segments for navigation options
                 filters={'video_id': video_id, 'type': 'segment'}
             )
             
-            self.logger.info(f"🔍 Vector search completed. Results: {len(segments_results.results) if segments_results else 0}")
+            # Process chunks results (for LLM context)
+            chunks_count = len(chunks_results.results) if chunks_results and chunks_results.results else 0
+            segments_count = len(segments_results.results) if segments_results and segments_results.results else 0
             
+            self.logger.info(f"🔍 Dual search completed. Chunks: {chunks_count}, Segments: {segments_count}")
+            
+            # Process transcript chunks (priority for answer generation)
+            if chunks_results and chunks_results.results:
+                self.logger.info(f"🔍 Processing {len(chunks_results.results)} transcript chunks")
+                for i, result in enumerate(chunks_results.results):
+                    raw_score = getattr(result, 'score', None)
+                    metadata_score = getattr(result.metadata, 'score', None) if hasattr(result, 'metadata') and result.metadata else None
+                    final_score = raw_score if raw_score is not None else (metadata_score if metadata_score is not None else 0.0)
+                    
+                    self.logger.info(f"🔍 Chunk {i+1}: score={final_score:.4f}, text='{result.text[:50]}...'")
+                    
+                    search_results.append({
+                        'type': 'transcript_chunk',
+                        'text': result.text,
+                        'score': final_score,
+                        'metadata': result.metadata,
+                        'priority': 'context'  # Mark for LLM context use
+                    })
+            
+            # Process segments (for navigation timestamps)
             if segments_results and segments_results.results:
-                self.logger.info(f"🔍 Processing {len(segments_results.results)} results")
+                self.logger.info(f"🔍 Processing {len(segments_results.results)} segments")
                 for i, result in enumerate(segments_results.results):
-                    self.logger.info(f"🔍 Result {i+1}: score={result.score:.4f}, text='{result.text[:50]}...'")
+                    raw_score = getattr(result, 'score', None)
+                    metadata_score = getattr(result.metadata, 'score', None) if hasattr(result, 'metadata') and result.metadata else None
+                    final_score = raw_score if raw_score is not None else (metadata_score if metadata_score is not None else 0.0)
+                    
+                    self.logger.info(f"🔍 Segment {i+1}: score={final_score:.4f}, text='{result.text[:50]}...'")
+                    
                     search_results.append({
                         'type': 'segment',
                         'text': result.text,
-                        'score': result.score,
-                        'metadata': result.metadata
+                        'score': final_score,
+                        'metadata': result.metadata,
+                        'priority': 'navigation'  # Mark for source timestamps
                     })
-            else:
+            
+            # Log strategy summary
+            if not chunks_count and not segments_count:
                 self.logger.warning(f"🔍 No vector search results found for video {video_id}")
+            elif chunks_count and not segments_count:
+                self.logger.info(f"🔍 Strategy: Chunks-only (no segments found)")
+            elif not chunks_count and segments_count:
+                self.logger.info(f"🔍 Strategy: Segments-only (no chunks found - fallback mode)")
+            else:
+                self.logger.info(f"🔍 Strategy: Hybrid (chunks for context, segments for navigation)")
                     
         except Exception as e:
             self.logger.error(f"🔍 Vector search failed: {e}")
@@ -156,24 +204,39 @@ class SearchService:
     
     async def _process_search_results(self, search_results: List[Dict[str, Any]], video_metadata) -> Tuple[str, List[Dict[str, Any]]]:
         """
-        Process search results and prepare context and sources.
+        Process dual search results: chunks for context, segments for navigation.
         
         Args:
-            search_results: Raw search results from vector search
+            search_results: Raw search results from dual vector search
             video_metadata: Video metadata for context
             
         Returns:
             Tuple of (compressed_context, formatted_sources)
         """
-        # Sort by relevance score and take top 3
-        search_results.sort(key=lambda x: x.get('score', 0), reverse=True)
-        top_results = search_results[:3]
+        # Separate chunks and segments
+        chunks = [r for r in search_results if r.get('type') == 'transcript_chunk']
+        segments = [r for r in search_results if r.get('type') == 'segment']
         
-        # Use response service for context compression
-        compressed_context = self.response_service.compress_context(top_results, max_chars=800)
+        self.logger.info(f"🔍 Processing results: {len(chunks)} chunks, {len(segments)} segments")
         
-        # Format sources for response
-        formatted_sources = self.response_service.format_search_sources(top_results, video_metadata)
+        # Strategy: Use highest-scoring results for LLM context (best relevance)
+        all_results = chunks + segments  # Combine all results
+        all_results.sort(key=lambda x: x.get('score', 0), reverse=True)
+        top_context = all_results[:5]  # Top 5 highest scoring for LLM context
+        
+        # Strategy 2: Use segments for user sources (better navigation)
+        sources_data = segments if segments else chunks  # Fallback to chunks if no segments
+        sources_data.sort(key=lambda x: x.get('score', 0), reverse=True)
+        top_sources = sources_data[:3]  # Top 3 for user display
+        
+        self.logger.info(f"🔍 Context strategy: Top {len(top_context)} highest-scoring results (mixed chunks+segments)")
+        self.logger.info(f"🔍 Sources strategy: {len(top_sources)} items from {'segments' if segments else 'chunks'}")
+        
+        # Generate LLM context from optimal source  
+        compressed_context = self.response_service.compress_context(top_context, max_chars=1800)  # Enhanced coverage for better keyword inclusion
+        
+        # Format user-facing sources from optimal source
+        formatted_sources = self.response_service.format_search_sources(top_sources, video_metadata)
         
         return compressed_context, formatted_sources
     
@@ -247,7 +310,7 @@ Answer:"""
             'answer': answer,
             'sources': sources[:3],  # Top 3 sources
             'confidence': confidence,
-            'search_method': 'vector_search',
+            'search_method': 'vector_search',  # Keep original schema compliance
             'results_count': len(search_results)
         }
         

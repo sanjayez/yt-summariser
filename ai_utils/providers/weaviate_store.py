@@ -287,10 +287,10 @@ class WeaviateVectorStoreProvider(VectorStoreProvider):
             start_time = time.time()
             
             # Use text-based search with native vectorizer instead of near_vector
-            # Correct syntax for Weaviate v4 near_text search
+            # Correct syntax for Weaviate v4 near_text search - request distance and certainty
             search_kwargs = {
                 "limit": query.top_k,
-                "return_metadata": wvc.query.MetadataQuery(score=True)
+                "return_metadata": wvc.query.MetadataQuery(distance=True, certainty=True)
             }
             
             # Add filters if provided
@@ -315,6 +315,21 @@ class WeaviateVectorStoreProvider(VectorStoreProvider):
             # Convert results to our model format
             results = []
             for obj in response.objects:
+                
+                # Extract confidence score from Weaviate metadata
+                extracted_score = 0.0
+                
+                if hasattr(obj, 'metadata') and obj.metadata:
+                    if hasattr(obj.metadata, 'certainty') and obj.metadata.certainty is not None:
+                        # Certainty: 0.0 - 1.0 (higher is better)
+                        extracted_score = obj.metadata.certainty
+                    elif hasattr(obj.metadata, 'distance') and obj.metadata.distance is not None:
+                        # Distance: 0.0 - 2.0 (lower is better), convert to similarity (higher is better)
+                        extracted_score = max(0.0, 1.0 - obj.metadata.distance)
+                    elif hasattr(obj.metadata, 'score') and obj.metadata.score is not None:
+                        # Score: if available, use directly
+                        extracted_score = obj.metadata.score
+                
                 # Reconstruct metadata from individual properties
                 metadata = {
                     "type": obj.properties.get("type", ""),
@@ -333,7 +348,7 @@ class WeaviateVectorStoreProvider(VectorStoreProvider):
                 result = VectorSearchResult(
                     id=obj.properties.get("original_id", str(obj.uuid)),  # Use original ID if available
                     text=obj.properties.get("text", ""),
-                    score=obj.metadata.score if hasattr(obj.metadata, 'score') else 0.0,
+                    score=extracted_score,
                     metadata=metadata,
                     embedding=None  # Vector retrieval would need separate API call in v4
                 )

@@ -52,9 +52,9 @@ class ResponseService:
             if len(text) < 20:
                 continue
                 
-            # Moderate truncation for very long segments
-            if len(text) > 250:
-                text = text[:247] + "..."
+            # Allow much longer segments to preserve important content (increased from 250 to 1100)
+            if len(text) > 1100:
+                text = text[:1097] + "..."
             
             # Format with timestamp for context
             metadata = result.get('metadata', {})
@@ -126,9 +126,13 @@ class ResponseService:
         """
         formatted_sources = []
         
-        for result in results:
-            if result.get('type') == 'segment':
-                metadata = result.get('metadata', {})
+        for i, result in enumerate(results):
+            result_type = result.get('type')
+            metadata = result.get('metadata', {})
+            confidence = result.get('score', 0.0)
+            
+            if result_type == 'segment':
+                # Handle segments with precise timestamps
                 timestamp = metadata.get('start_time', 0)
                 minutes = int(timestamp // 60)
                 seconds = int(timestamp % 60)
@@ -144,16 +148,27 @@ class ResponseService:
                     'timestamp': time_str,
                     'text': clean_text,
                     'youtube_url': metadata.get('youtube_url', str(video_metadata.webpage_url) if video_metadata else ''),
-                    'confidence': result.get('score', 0.0)
+                    'confidence': confidence
                 })
-            else:
-                # Handle other source types (transcript, etc.)
+                
+            elif result_type == 'transcript_chunk':
+                # Handle transcript chunks (no specific timestamps, but show as chunks)
                 formatted_sources.append({
-                    'type': result.get('type', 'transcript'),
+                    'type': 'chunk',
+                    'timestamp': 'Multiple',  # Chunks span multiple timestamps
+                    'text': result.get('text', '')[:200] + '...' if len(result.get('text', '')) > 200 else result.get('text', ''),
+                    'youtube_url': str(video_metadata.webpage_url) if video_metadata else '',
+                    'confidence': confidence
+                })
+                
+            else:
+                # Handle other source types (summary, metadata, etc.)
+                formatted_sources.append({
+                    'type': result_type or 'transcript',
                     'timestamp': 'Unknown',
                     'text': result.get('text', ''),
                     'youtube_url': str(video_metadata.webpage_url) if video_metadata else '',
-                    'confidence': result.get('relevance', result.get('score', 0.0))
+                    'confidence': confidence
                 })
         
         return formatted_sources
@@ -195,7 +210,7 @@ class ResponseService:
         if not results:
             return 0.0
         
-        scores = [result.get('score', result.get('relevance', 0.0)) for result in results]
+        scores = [result.get('score', 0.0) for result in results]
         valid_scores = [score for score in scores if isinstance(score, (int, float))]
         
         if not valid_scores:
