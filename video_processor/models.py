@@ -152,6 +152,63 @@ class VideoTranscript(models.Model):
         help_text="Source used for transcript extraction"
     )
     
+    # Content quality analysis fields
+    content_rating = models.FloatField(
+        null=True, 
+        blank=True, 
+        help_text="0.0-1.0 content quality rating (1 - ad_ratio - filler_ratio)"
+    )
+    
+    # Speaker tone choices based on tone-speech.md
+    speaker_tones = models.JSONField(
+        default=list, 
+        blank=True, 
+        help_text="List of detected speaker tones: ['positive', 'informal', 'humorous']"
+    )
+    
+    # Final analysis with timestamps
+    ad_segments = models.JSONField(
+        default=list, 
+        blank=True, 
+        help_text='[{"start": 30, "end": 60}, {"start": 240, "end": 270}]'
+    )
+    
+    filler_segments = models.JSONField(
+        default=list, 
+        blank=True, 
+        help_text='[{"start": 0, "end": 15}, {"start": 580, "end": 600}]'
+    )
+    
+    content_segments = models.JSONField(
+        default=list, 
+        blank=True, 
+        help_text='[{"start": 15, "end": 30}, {"start": 60, "end": 240}]'
+    )
+    
+    ad_duration_ratio = models.FloatField(
+        null=True, 
+        blank=True,
+        help_text="Total ad duration / video duration"
+    )
+    
+    filler_duration_ratio = models.FloatField(
+        null=True, 
+        blank=True,
+        help_text="Total filler duration / video duration"  
+    )
+    
+    content_analysis_status = models.CharField(
+        max_length=20,
+        choices=[
+            ('pending', 'Pending'),
+            ('preliminary', 'Preliminary Complete'),
+            ('failed', 'Analysis Failed'),
+            ('final', 'Final Complete')
+        ],
+        default='pending',
+        help_text="Status of content analysis pipeline"
+    )
+    
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='processing')
     created_at = models.DateTimeField(auto_now_add=True)
     
