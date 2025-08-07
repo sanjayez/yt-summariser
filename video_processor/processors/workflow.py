@@ -10,6 +10,8 @@ from .metadata import extract_video_metadata
 from .transcript import extract_video_transcript
 from .summary import generate_video_summary
 from .content_classifier import classify_and_exclude_video_llm
+from .content_analysis_preliminary import content_analysis_preliminary
+from .content_analysis_finalization import content_analysis_finalization
 from .embedding import embed_video_content
 from .status import update_overall_status
 
@@ -27,8 +29,8 @@ def process_youtube_video(self, url_request_id):
     """
     Process a single YouTube video through the complete pipeline.
     
-    Executes the full workflow: metadata → transcript → summary → classification → status update
-    Note: Embedding has been moved to a separate filtering layer
+    Executes the full workflow: metadata → transcript → [content_analysis_preliminary + summary + classification] → embedding → content_analysis_finalization → status update
+    Features parallel processing of content analysis, summary, and classification tasks
     
     Args:
         url_request_id (int): ID of the URLRequestTable to process
@@ -56,25 +58,38 @@ def process_youtube_video(self, url_request_id):
         logger.info(f"Starting video processing pipeline for request {url_request_id}")
         
         # Execute workflow chain: each task receives previous result as first argument
-        # Full pipeline: metadata → transcript → summary → classification → embedding → status
+        # New pipeline: metadata → transcript → [content_analysis_preliminary + summary + classification] → embedding → content_analysis_finalization → status
+        logger.info(f"Constructing workflow chain for request {url_request_id}")
+        
         workflow = chain(
             extract_video_metadata.s(url_request_id),
             extract_video_transcript.s(url_request_id),  # Pass url_request_id explicitly to ensure continuity
-            generate_video_summary.s(url_request_id),    # Pass url_request_id explicitly to ensure continuity
-            classify_and_exclude_video_llm.s(url_request_id),  # Pass url_request_id explicitly to ensure continuity
+            
+            # Parallel group: content analysis (phase 1), summary, and classification run together
+            group(
+                content_analysis_preliminary.s(url_request_id),
+                generate_video_summary.s(url_request_id),
+                classify_and_exclude_video_llm.s(url_request_id)
+            ),
+            
             embed_video_content.s(url_request_id),       # Pass url_request_id explicitly to ensure continuity
+            content_analysis_finalization.s(url_request_id), # Phase 2: add timestamps and ratios
             update_overall_status.s(url_request_id)      # Pass url_request_id explicitly to ensure continuity
         )
         
+        logger.info(f"Workflow chain constructed with parallel content analysis processing for request {url_request_id}")
+        
         # Capture workflow result to enable result tracking and eliminate fire-and-forget behavior
+        logger.info(f"Starting workflow execution for request {url_request_id}")
         result = workflow.apply_async()
         
         # Store chain task ID for progress tracking and result retrieval
         url_request.chain_task_id = result.id
         url_request.save(update_fields=['chain_task_id'])
+        logger.info(f"Workflow initiated with chain_task_id {result.id} for request {url_request_id}")
         
-        logger.info(f"Initiated processing pipeline for request {url_request_id}")
-        return f"Initiated complete processing pipeline for request {url_request_id}"
+        logger.info(f"Successfully initiated two-phase content analysis pipeline for request {url_request_id}")
+        return f"Initiated complete processing pipeline with parallel content analysis for request {url_request_id}"
         
     except SoftTimeLimitExceeded:
         # Workflow orchestration is approaching timeout - this should not happen often

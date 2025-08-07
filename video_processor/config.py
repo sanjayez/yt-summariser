@@ -42,6 +42,11 @@ YOUTUBE_CONFIG = {
         'parallel_soft_limit': 1200,     # 20 minutes - processing multiple videos
         'parallel_hard_limit': 1500,     # 25 minutes - absolute maximum  
         'parallel_timeout': 1080,        # 18 minutes - internal timeout
+        
+        # Content analysis timeouts (fire-and-forget)
+        'content_analysis_soft_limit': 600,  # 10 minutes - LLM chunked analysis
+        'content_analysis_hard_limit': 900,  # 15 minutes - absolute maximum
+        'content_analysis_timeout': 540,     # 9 minutes - internal timeout
     },
     'RETRY_CONFIG': {
         'metadata': {
@@ -163,6 +168,7 @@ TASK_STATES = {
     'GENERATING_SUMMARY': 'generating_summary',
     'EMBEDDING_CONTENT': 'embedding_content',
     'UPDATING_STATUS': 'updating_status',
+    'ANALYZING_CONTENT': 'analyzing_content',
     'COMPLETED': 'completed',
     'FAILED_PERMANENTLY': 'failed_permanently'
 }

@@ -152,62 +152,7 @@ class VideoTranscript(models.Model):
         help_text="Source used for transcript extraction"
     )
     
-    # Content quality analysis fields
-    content_rating = models.FloatField(
-        null=True, 
-        blank=True, 
-        help_text="0.0-1.0 content quality rating (1 - ad_ratio - filler_ratio)"
-    )
-    
-    # Speaker tone choices based on tone-speech.md
-    speaker_tones = models.JSONField(
-        default=list, 
-        blank=True, 
-        help_text="List of detected speaker tones: ['positive', 'informal', 'humorous']"
-    )
-    
-    # Final analysis with timestamps
-    ad_segments = models.JSONField(
-        default=list, 
-        blank=True, 
-        help_text='[{"start": 30, "end": 60}, {"start": 240, "end": 270}]'
-    )
-    
-    filler_segments = models.JSONField(
-        default=list, 
-        blank=True, 
-        help_text='[{"start": 0, "end": 15}, {"start": 580, "end": 600}]'
-    )
-    
-    content_segments = models.JSONField(
-        default=list, 
-        blank=True, 
-        help_text='[{"start": 15, "end": 30}, {"start": 60, "end": 240}]'
-    )
-    
-    ad_duration_ratio = models.FloatField(
-        null=True, 
-        blank=True,
-        help_text="Total ad duration / video duration"
-    )
-    
-    filler_duration_ratio = models.FloatField(
-        null=True, 
-        blank=True,
-        help_text="Total filler duration / video duration"  
-    )
-    
-    content_analysis_status = models.CharField(
-        max_length=20,
-        choices=[
-            ('pending', 'Pending'),
-            ('preliminary', 'Preliminary Complete'),
-            ('failed', 'Analysis Failed'),
-            ('final', 'Final Complete')
-        ],
-        default='pending',
-        help_text="Status of content analysis pipeline"
-    )
+    # Content analysis fields have been moved to ContentAnalysis model
     
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='processing')
     created_at = models.DateTimeField(auto_now_add=True)
@@ -453,3 +398,164 @@ class VideoExclusionTable(models.Model):
             return cls.objects.get(video_id=video_id).exclusion_reason
         except cls.DoesNotExist:
             return None
+
+
+class ContentAnalysis(models.Model):
+    """
+    Two-phase content analysis for video transcripts.
+    
+    Phase 1: Preliminary analysis without timestamps (runs in parallel with summary/classification)
+    Phase 2: Final analysis with timestamps and ratios (runs after embedding)
+    """
+    
+    # Core relationship
+    video_transcript = models.OneToOneField(
+        VideoTranscript, 
+        on_delete=models.CASCADE,
+        related_name='content_analysis'
+    )
+    
+    # Phase 1: Preliminary Analysis (no timestamps needed)
+    preliminary_analysis_status = models.CharField(
+        max_length=20,
+        choices=[
+            ('pending', 'Pending'),
+            ('processing', 'Processing'),
+            ('completed', 'Completed'),
+            ('failed', 'Failed')
+        ],
+        default='pending',
+        help_text="Status of preliminary content analysis (ads/filler detection, tone analysis)"
+    )
+    
+    # Content classification results from Phase 1 (NO ratios yet - require timestamps)
+    speaker_tones = models.JSONField(
+        default=list, 
+        blank=True, 
+        help_text="List of detected speaker tones: ['informal', 'positive', 'humorous']"
+    )
+    
+    # Raw analysis results from Phase 1 (NO timestamps)
+    raw_ad_segments = models.JSONField(
+        default=list, 
+        blank=True, 
+        help_text='Raw ad segments with text excerpts only: [{"text": "...", "description": "..."}]'
+    )
+    
+    raw_filler_segments = models.JSONField(
+        default=list, 
+        blank=True, 
+        help_text='Raw filler segments with text excerpts only: [{"text": "...", "description": "..."}]'
+    )
+    
+    # Phase 2: Timestamped Analysis (after embedding)
+    timestamped_analysis_status = models.CharField(
+        max_length=20,
+        choices=[
+            ('pending', 'Pending'),
+            ('processing', 'Processing'), 
+            ('completed', 'Completed'),
+            ('failed', 'Failed')
+        ],
+        default='pending',
+        help_text="Status of final timestamped analysis and ratio calculation"
+    )
+    
+    # Final timestamped results & quality ratios (REQUIRES timestamps from Phase 2)
+    content_rating = models.FloatField(
+        null=True, 
+        blank=True, 
+        help_text="0.0-1.0 content quality rating (1 - ad_ratio - filler_ratio)"
+    )
+    
+    ad_duration_ratio = models.FloatField(
+        null=True, 
+        blank=True,
+        help_text="Total ad duration / video duration"
+    )
+    
+    filler_duration_ratio = models.FloatField(
+        null=True, 
+        blank=True,
+        help_text="Total filler duration / video duration"  
+    )
+    
+    ad_segments = models.JSONField(
+        default=list, 
+        blank=True, 
+        help_text='Final ad segments with timestamps: [{"start": 30, "end": 60, "desc": "..."}]'
+    )
+    
+    filler_segments = models.JSONField(
+        default=list, 
+        blank=True, 
+        help_text='Final filler segments with timestamps: [{"start": 0, "end": 15, "desc": "..."}]'
+    )
+    
+    content_segments = models.JSONField(
+        default=list, 
+        blank=True, 
+        help_text='Final content segments with timestamps: [{"start": 15, "end": 30, "desc": "..."}]'
+    )
+    
+    # Metadata
+    preliminary_completed_at = models.DateTimeField(
+        null=True, 
+        blank=True,
+        help_text="When preliminary analysis was completed"
+    )
+    
+    final_completed_at = models.DateTimeField(
+        null=True, 
+        blank=True,
+        help_text="When final timestamped analysis was completed"
+    )
+    
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    
+    class Meta:
+        ordering = ['-created_at']
+        indexes = [
+            models.Index(fields=['preliminary_analysis_status']),
+            models.Index(fields=['timestamped_analysis_status']),
+            models.Index(fields=['content_rating']),
+            models.Index(fields=['created_at']),
+        ]
+    
+    def __str__(self):
+        return f"ContentAnalysis for {self.video_transcript.video_id} (P1:{self.preliminary_analysis_status}, P2:{self.timestamped_analysis_status})"
+    
+    @property
+    def is_preliminary_complete(self):
+        """Check if preliminary analysis is complete"""
+        return self.preliminary_analysis_status == 'completed'
+    
+    @property
+    def is_final_complete(self):
+        """Check if final timestamped analysis is complete"""
+        return self.timestamped_analysis_status == 'completed'
+    
+    @property
+    def is_complete(self):
+        """Check if both phases are complete"""
+        return self.is_preliminary_complete and self.is_final_complete
+    
+    def get_analysis_summary(self):
+        """Get a summary of the content analysis results"""
+        if not self.is_complete:
+            return {
+                'status': 'incomplete',
+                'preliminary_complete': self.is_preliminary_complete,
+                'final_complete': self.is_final_complete
+            }
+        
+        return {
+            'status': 'complete',
+            'content_rating': self.content_rating,
+            'ad_ratio': self.ad_duration_ratio,
+            'filler_ratio': self.filler_duration_ratio,
+            'speaker_tones': self.speaker_tones,
+            'total_ad_segments': len(self.ad_segments),
+            'total_filler_segments': len(self.filler_segments)
+        }

@@ -5,6 +5,9 @@ from .summary import generate_video_summary
 from .embedding import embed_video_content
 from .status import update_overall_status
 from .workflow import process_youtube_video
+from .content_analysis_preliminary import content_analysis_preliminary
+from .content_analysis_finalization import content_analysis_finalization
+from .content_classifier import classify_and_exclude_video_llm
 
 __all__ = [
     'process_youtube_video',
@@ -12,5 +15,9 @@ __all__ = [
     'extract_video_transcript',
     'generate_video_summary',
     'embed_video_content',
-    'update_overall_status'
-] 
+    'update_overall_status',
+    'content_analysis_preliminary',
+    'content_analysis_finalization',
+    'classify_and_exclude_video_llm'
+]
+ 
