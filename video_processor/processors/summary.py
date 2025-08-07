@@ -21,7 +21,7 @@ from ..utils import (
     update_task_progress
 )
 from ..text_utils.chunking import chunk_transcript_text, validate_embedding_text
-from ai_utils.providers.openai_llm import OpenAILLMProvider
+from ai_utils.providers.gemini_llm import GeminiLLMProvider
 from ai_utils.services.llm_service import LLMService
 from ai_utils.models import ChatMessage, ChatRequest
 from ai_utils.config import AIConfig
@@ -344,7 +344,7 @@ def generate_summary_sync(transcript_text: str, video_metadata=None) -> tuple:
         # Initialize LLM service with OpenAI provider and config
         from ai_utils.config import get_config
         config = get_config()
-        llm_provider = OpenAILLMProvider(config)
+        llm_provider = GeminiLLMProvider(config)
         llm_service = LLMService(llm_provider)
         
         # TODO: Simplify chunking logic - current complexity handles LLM API instability

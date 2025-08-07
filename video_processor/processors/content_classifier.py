@@ -17,7 +17,7 @@ from celery import shared_task
 from django.conf import settings
 
 from ai_utils.config import get_config
-from ai_utils.providers.openai_llm import OpenAILLMProvider
+from ai_utils.providers.gemini_llm import GeminiLLMProvider
 from ai_utils.services.llm_service import LLMService
 from ai_utils.models import ChatMessage, ChatRole, ChatRequest
 
@@ -268,7 +268,7 @@ async def classify_video_with_llm(context: Dict[str, Any]) -> Dict[str, Any]:
         
         # Initialize AI services using existing infrastructure
         config = get_config()
-        llm_provider = OpenAILLMProvider(config=config)
+        llm_provider = GeminiLLMProvider(config=config)
         llm_service = LLMService(provider=llm_provider)
         
         # Create chat request
@@ -279,7 +279,7 @@ async def classify_video_with_llm(context: Dict[str, Any]) -> Dict[str, Any]:
         
         request = ChatRequest(
             messages=messages,
-            model=config.openai.chat_model,
+            model=config.gemini.model,
             temperature=0.3,  # Lower temperature for consistent classification
             max_tokens=500    # Sufficient for JSON response
         )
