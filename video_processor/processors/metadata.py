@@ -1,4 +1,8 @@
 import yt_dlp
+import os
+import json as _json
+from urllib.parse import urlencode
+from urllib.request import urlopen
 import logging
 from celery import shared_task
 from celery_progress.backend import ProgressRecorder
@@ -16,6 +20,34 @@ from ..utils import (
 from ..utils.metadata_normalizer import normalize_youtube_metadata
 
 logger = logging.getLogger(__name__)
+
+def _fetch_channel_thumbnail_via_youtube_api(channel_id: str) -> str:
+    """Return channel avatar thumbnail URL using YouTube Data API v3.
+    If anything fails (missing key, HTTP error, parsing), return empty string.
+    """
+    try:
+        api_key = os.getenv('GOOGLE_API_KEY')
+        if not api_key or not channel_id:
+            return ''
+        qs = urlencode({
+            'part': 'snippet',
+            'id': channel_id,
+            'key': api_key,
+        })
+        url = f"https://www.googleapis.com/youtube/v3/channels?{qs}"
+        with urlopen(url, timeout=5) as resp:
+            data = _json.loads(resp.read().decode('utf-8'))
+        items = (data or {}).get('items') or []
+        if not items:
+            return ''
+        thumbs = (((items[0] or {}).get('snippet') or {}).get('thumbnails') or {})
+        # Prefer higher quality if available
+        for key in ['maxres', 'high', 'medium', 'standard', 'default']:
+            if isinstance(thumbs.get(key), dict) and thumbs[key].get('url'):
+                return thumbs[key]['url']
+        return ''
+    except Exception:
+        return ''
 
 def parse_upload_date(upload_date_str):
     """Parse YouTube upload_date string (YYYYMMDD) to date object"""
@@ -150,6 +182,9 @@ def extract_video_metadata(self, url_request_id):
         video_language = metadata.get('language', 'en')
         # Save to database with transaction (using normalized data)
         with transaction.atomic():
+            # Fetch channel avatar via YouTube Data API (single call, no retries)
+            yt_avatar = _fetch_channel_thumbnail_via_youtube_api(metadata.get('channel_id')) if metadata.get('channel_id') else ''
+
             video_metadata = VideoMetadata.objects.create(
                 video_id=metadata['video_id'],
                 title=metadata['title'],
@@ -169,6 +204,7 @@ def extract_video_metadata(self, url_request_id):
                 uploader_id=metadata['uploader_id'],
                 comment_count=metadata['comment_count'],
                 engagement=metadata['engagement'],
+                channel_thumbnail=yt_avatar or '',
                 url_request=url_request,
                 status='success'
             )

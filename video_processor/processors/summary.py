@@ -1,6 +1,6 @@
 """
 Video Summary Generation Task
-Generates AI-powered summaries and key points from video transcripts using OpenAI LLM.
+Generates AI-powered summaries and key points from video transcripts using Gemini LLM.
 """
 
 from celery import shared_task
@@ -8,23 +8,22 @@ from celery.exceptions import SoftTimeLimitExceeded
 from celery_progress.backend import ProgressRecorder
 from django.db import transaction
 import logging
+import os
 import json
 import re
 import asyncio  # Move import to top to avoid scope issues
 import time
 
 from api.models import URLRequestTable
-from ..models import VideoMetadata, VideoTranscript
 from ..config import YOUTUBE_CONFIG, TASK_STATES
 from ..utils import (
-    timeout, idempotent_task, handle_dead_letter_task, 
+    idempotent_task, handle_dead_letter_task, 
     update_task_progress
 )
 from ..text_utils.chunking import chunk_transcript_text, validate_embedding_text
-from ai_utils.providers.gemini_llm import GeminiLLMProvider
-from ai_utils.services.llm_service import LLMService
+from ai_utils.services.registry import get_gemini_llm_service
 from ai_utils.models import ChatMessage, ChatRequest
-from ai_utils.config import AIConfig
+from temp_file_logger import append_line
 
 logger = logging.getLogger(__name__)
 
@@ -344,8 +343,7 @@ def generate_summary_sync(transcript_text: str, video_metadata=None) -> tuple:
         # Initialize LLM service with OpenAI provider and config
         from ai_utils.config import get_config
         config = get_config()
-        llm_provider = GeminiLLMProvider(config)
-        llm_service = LLMService(llm_provider)
+        llm_service = get_gemini_llm_service()
         
         # TODO: Simplify chunking logic - current complexity handles LLM API instability
         # Enhanced chunking for very long transcripts (like 26+ minute videos)
@@ -469,6 +467,13 @@ Create a unified, well-structured summary with key points. Focus on the main the
         else:
             # Direct summarization for shorter transcripts
             logger.info(f"Generating direct summary for transcript ({len(transcript_text)} chars)")
+            try:
+                append_line(
+                    file_path=os.getenv('TIMING_LOG_FILE', 'logs/stage_timings.log'),
+                    message=f"summary_input video_id={getattr(video_metadata, 'video_id', 'unknown')} transcript_chars={len(transcript_text)}"
+                )
+            except Exception:
+                pass
             
             # Create summary prompt
             prompt = create_summary_prompt(transcript_text, video_metadata)
@@ -492,9 +497,24 @@ Create a unified, well-structured summary with key points. Focus on the main the
                 loop.close()
             
             if not response_data or not response_data.get('response') or not response_data['response'].choices:
+                try:
+                    append_line(
+                        file_path=os.getenv('TIMING_LOG_FILE', 'logs/stage_timings.log'),
+                        message=f"summary_error video_id={getattr(video_metadata, 'video_id', 'unknown')} reason=no_choices"
+                    )
+                except Exception:
+                    pass
                 raise ValueError("Failed to generate summary from LLM")
             
             structured_response = response_data['response'].choices[0].message.content
+            try:
+                preview = (structured_response[:200] + '...') if len(structured_response) > 200 else structured_response
+                append_line(
+                    file_path=os.getenv('TIMING_LOG_FILE', 'logs/stage_timings.log'),
+                    message=f"summary_output video_id={getattr(video_metadata, 'video_id', 'unknown')} preview={preview}"
+                )
+            except Exception:
+                pass
         
         # Parse executive summary and chapters with robust fallback logic
         executive_summary, chapters = _parse_llm_response_robust(structured_response)

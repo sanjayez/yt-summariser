@@ -15,8 +15,7 @@ from .utils.session_utils import update_session_status
 from .utils.explorer_progress import ExplorerProgressTracker
 from .services.search_service import SearchRequest
 from ai_utils.config import get_config
-from ai_utils.services.llm_service import LLMService
-from ai_utils.providers.gemini_llm import GeminiLLMProvider
+from ai_utils.services.registry import get_gemini_llm_service
 from .services.search_service import YouTubeSearchService
 from .services.providers.scrapetube_provider import ScrapeTubeProvider
 from .services.query_processor import QueryProcessor
@@ -94,9 +93,8 @@ def process_search_query(self, search_id: str, max_videos: int = 5):
             config = get_config()
             config.validate()
             
-            # Use Gemini LLM provider for query processing
-            llm_provider = GeminiLLMProvider(config=config)
-            llm_service = LLMService(provider=llm_provider)
+            # Use shared Gemini LLM service for query processing
+            llm_service = get_gemini_llm_service()
 
             # get clients for LLM and YouTube search
             query_processor = QueryProcessor(llm_service=llm_service)

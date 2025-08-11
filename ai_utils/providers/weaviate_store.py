@@ -6,6 +6,7 @@ Implements the VectorStoreProvider interface with Weaviate's vector database.
 import asyncio
 import logging
 import time
+import os
 from typing import List, Dict, Any, Optional
 from datetime import datetime
 import weaviate
@@ -17,6 +18,7 @@ from ..models import (
 )
 from ..config import get_config
 from ..utils.performance import PerformanceBenchmark
+from temp_file_logger import append_line
 
 logger = logging.getLogger(__name__)
 
@@ -248,6 +250,13 @@ class WeaviateVectorStoreProvider(VectorStoreProvider):
                 batch = objects[i:i + batch_size]
                 
                 # Use the new batch insert API
+                try:
+                    append_line(
+                        file_path=os.getenv('TIMING_LOG_FILE', 'logs/stage_timings.log'),
+                        message=f"vector_upsert_batch size={len(batch)} configured_batch_size={batch_size}"
+                    )
+                except Exception:
+                    pass
                 response = self.collection.data.insert_many(batch)
                 
                 # Count successful inserts

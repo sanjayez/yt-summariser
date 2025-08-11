@@ -328,17 +328,33 @@ async def get_video_summary(request: HttpRequest, request_id: UUID) -> JsonRespo
                     chapters_data = None
                     
             elif isinstance(raw_key_points, dict):
-                # Handle dictionary - might be a single chapter or wrapped data
+                # Handle dictionary - may contain both key_points and chapters
                 logger.warning(f"key_points is dict for video {transcript.video_id}, attempting to process")
-                
-                if 'chapters' in raw_key_points and isinstance(raw_key_points['chapters'], list):
-                    # Wrapped chapters data
-                    raw_key_points = raw_key_points['chapters']
-                    logger.debug(f"Extracted chapters from wrapper dict for video {transcript.video_id}")
-                elif 'key_points' in raw_key_points and isinstance(raw_key_points['key_points'], list):
-                    # Wrapped key points data
-                    raw_key_points = raw_key_points['key_points']
-                    logger.debug(f"Extracted key_points from wrapper dict for video {transcript.video_id}")
+
+                # Prefer explicit key_points if present
+                extracted_key_points = None
+                extracted_chapters = None
+                try:
+                    if 'key_points' in raw_key_points and isinstance(raw_key_points['key_points'], list):
+                        extracted_key_points = raw_key_points['key_points']
+                        logger.debug(f"Extracted key_points from wrapper dict for video {transcript.video_id}")
+                    if 'chapters' in raw_key_points and isinstance(raw_key_points['chapters'], list):
+                        extracted_chapters = raw_key_points['chapters']
+                        logger.debug(f"Extracted chapters from wrapper dict for video {transcript.video_id}")
+                except Exception:
+                    pass
+
+                if extracted_key_points is not None:
+                    # Use provided key_points; also retain chapters if present for later validation
+                    raw_key_points = extracted_key_points
+                    # Prefer chapters from explicit field on the model if present
+                    if hasattr(transcript, 'chapters') and transcript.chapters:
+                        chapters_data = transcript.chapters
+                    elif extracted_chapters is not None:
+                        chapters_data = extracted_chapters  # Validate later
+                elif extracted_chapters is not None:
+                    # No key_points provided; derive from chapters
+                    raw_key_points = extracted_chapters
                 else:
                     # Treat the dict as a single chapter
                     raw_key_points = [raw_key_points]
@@ -528,6 +544,10 @@ async def get_video_summary(request: HttpRequest, request_id: UUID) -> JsonRespo
                     logger.warning(f"Cleaned {len(chapters_data) - len(valid_chapters)} invalid chapters for video {transcript.video_id}")
                     chapters_data = valid_chapters if valid_chapters else None
             
+            # If chapters were not populated via key_points wrapper, prefer the model's chapters field
+            if not chapters_data and hasattr(transcript, 'chapters') and isinstance(transcript.chapters, list) and transcript.chapters:
+                chapters_data = transcript.chapters
+
             # Prepare validated response with comprehensive error handling
             logger.debug(f"Creating VideoSummaryResponse for video {transcript.video_id}")
             

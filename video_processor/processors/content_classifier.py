@@ -17,8 +17,7 @@ from celery import shared_task
 from django.conf import settings
 
 from ai_utils.config import get_config
-from ai_utils.providers.gemini_llm import GeminiLLMProvider
-from ai_utils.services.llm_service import LLMService
+from ai_utils.services.registry import get_gemini_llm_service
 from ai_utils.models import ChatMessage, ChatRole, ChatRequest
 
 from api.models import URLRequestTable
@@ -268,8 +267,7 @@ async def classify_video_with_llm(context: Dict[str, Any]) -> Dict[str, Any]:
         
         # Initialize AI services using existing infrastructure
         config = get_config()
-        llm_provider = GeminiLLMProvider(config=config)
-        llm_service = LLMService(provider=llm_provider)
+        llm_service = get_gemini_llm_service()
         
         # Create chat request
         messages = [

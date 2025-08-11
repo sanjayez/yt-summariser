@@ -126,21 +126,25 @@ class SearchService:
             
             vector_service = services['vector']
             
-            # Primary search: Transcript chunks for coherent context
-            self.logger.info(f"🔍 Searching transcript chunks...")
-            chunks_results = await vector_service.search_by_text(
-                text=question,
-                top_k=5,  # More chunks for better keyword coverage
-                filters={'video_id': video_id, 'type': 'transcript_chunk'}
-            )
-            
-            # Secondary search: Segments for precise navigation
-            self.logger.info(f"🔍 Searching segments...")
-            segments_results = await vector_service.search_by_text(
-                text=question,
-                top_k=5,  # More segments for navigation options
-                filters={'video_id': video_id, 'type': 'segment'}
-            )
+            # Run both searches concurrently to reduce latency
+            async def _search_chunks():
+                self.logger.info(f"🔍 Searching transcript chunks...")
+                return await vector_service.search_by_text(
+                    text=question,
+                    top_k=5,
+                    filters={'video_id': video_id, 'type': 'transcript_chunk'}
+                )
+
+            async def _search_segments():
+                self.logger.info(f"🔍 Searching segments...")
+                return await vector_service.search_by_text(
+                    text=question,
+                    top_k=5,
+                    filters={'video_id': video_id, 'type': 'segment'}
+                )
+
+            import asyncio as _asyncio
+            chunks_results, segments_results = await _asyncio.gather(_search_chunks(), _search_segments(), return_exceptions=False)
             
             # Process chunks results (for LLM context)
             chunks_count = len(chunks_results.results) if chunks_results and chunks_results.results else 0

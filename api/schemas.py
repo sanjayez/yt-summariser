@@ -124,19 +124,39 @@ class SearchSource(BaseModel):
 
 class VideoMetadataResponse(BaseModel):
     """Schema for video metadata in responses"""
+    # Core identifiers
     video_id: str = Field(..., description="YouTube video ID")
     title: str = Field(..., description="Video title")
-    description: Optional[str] = Field(None, description="Video description (truncated)")
+    description: Optional[str] = Field(None, description="Video description")
     duration: Optional[int] = Field(None, description="Duration in seconds")
     duration_string: Optional[str] = Field(None, description="Duration in MM:SS format")
+    
+    # Channel
     channel_name: Optional[str] = Field(None, description="Channel name")
+    channel_id: Optional[str] = Field(None, description="YouTube channel ID")
+    uploader_id: Optional[str] = Field(None, description="Uploader handle")
+    channel_thumbnail: Optional[HttpUrl] = Field(None, description="Channel avatar/thumbnail URL")
+    
+    # Media
+    thumbnail: Optional[HttpUrl] = Field(None, description="Video thumbnail URL")
+    youtube_url: HttpUrl = Field(..., description="YouTube video URL")
+    
+    # Counts
     view_count: Optional[int] = Field(None, description="View count")
     like_count: Optional[int] = Field(None, description="Like count")
-    upload_date: Optional[str] = Field(None, description="Upload date in YYYY-MM-DD format")
+    comment_count: Optional[int] = Field(None, description="Comment count")
+    channel_follower_count: Optional[int] = Field(None, description="Channel subscriber count")
+    channel_is_verified: Optional[bool] = Field(None, description="Whether the channel is verified")
+    
+    # Other
     language: Optional[str] = Field(None, description="Video language")
-    tags: Optional[List[str]] = Field(None, description="Video tags (limited)")
-    youtube_url: HttpUrl = Field(..., description="YouTube video URL")
-    thumbnail: Optional[HttpUrl] = Field(None, description="Thumbnail URL")
+    upload_date: Optional[str] = Field(None, description="Upload date in YYYY-MM-DD format")
+    tags: Optional[List[str]] = Field(None, description="Video tags")
+    categories: Optional[List[str]] = Field(None, description="Categories")
+    engagement: Optional[List[Dict[str, Any]]] = Field(None, description="High engagement segments")
+    is_embedded: Optional[bool] = Field(None, description="Whether metadata is embedded in vector store")
+    status: Optional[str] = Field(None, description="Processing status of metadata")
+    created_at: Optional[str] = Field(None, description="Created at timestamp (ISO)")
     
     @field_validator('upload_date', mode='before')
     @classmethod

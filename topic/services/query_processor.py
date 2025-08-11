@@ -4,14 +4,29 @@ Enhances user queries by converting natural language to effective YouTube search
 """
 
 import logging
+import time
+import os
 import json
 from typing import Dict, Any, Optional
 from uuid import uuid4
 
 from ai_utils.services.llm_service import LLMService
 from ai_utils.models import ChatRequest, ChatMessage, ChatRole, ProcessingStatus
+from temp_file_logger import append_line
 
 logger = logging.getLogger(__name__)
+
+
+def _log_qp_timing(stage: str, job_id: str, elapsed_s: float, extra: str = "") -> None:
+    """Append a timing line for QueryProcessor stages to the timing log file."""
+    try:
+        append_line(
+            file_path=os.getenv('TIMING_LOG_FILE', 'logs/stage_timings.log'),
+            message=f"qp stage={stage} job_id={job_id} elapsed_s={elapsed_s:.2f} {extra}".strip()
+        )
+    except Exception:
+        # Best-effort; never raise
+        pass
 
 class QueryProcessor:
     """
@@ -95,6 +110,7 @@ IMPORTANT: Respond with ONLY the JSON object. No additional text or explanations
         job_id = job_id or f"query_enhance_{uuid4().hex[:8]}"
         
         try:
+            overall_start = time.time()
             # Validate input
             if not user_query or not user_query.strip():
                 return {
@@ -120,7 +136,9 @@ IMPORTANT: Respond with ONLY the JSON object. No additional text or explanations
             logger.debug(f"  Max tokens: {chat_request.max_tokens}")
             logger.debug(f"  Messages: {[{'role': msg.role.value, 'content': msg.content[:100] + '...' if len(msg.content) > 100 else msg.content} for msg in chat_request.messages]}")
             
+            llm_start = time.time()
             result = await self._llm_with_retry(chat_request, job_id, max_retries=2)
+            _log_qp_timing("qp_llm_total", job_id, time.time() - llm_start)
             
             if result["status"] == "completed":
                 llm_response = result["response"].choices[0].message.content.strip()
@@ -140,6 +158,7 @@ IMPORTANT: Respond with ONLY the JSON object. No additional text or explanations
                 
                 # Parse JSON response containing intent, concepts, and enhanced queries
                 try:
+                    parse_start = time.time()
                     # Clean the response - sometimes LLM adds extra text before/after JSON
                     logger.debug("Starting JSON extraction from LLM response...")
                     cleaned_response = self._extract_json_from_response(llm_response)
@@ -210,8 +229,10 @@ IMPORTANT: Respond with ONLY the JSON object. No additional text or explanations
                     # Determine if it's a complex query
                     is_complex = len(enhanced_queries) > 1
                     logger.debug(f"Query classified as {'complex' if is_complex else 'simple'}")
+                    _log_qp_timing("qp_parse_json", job_id, time.time() - parse_start)
                 
                 except (json.JSONDecodeError, KeyError, ValueError) as e:
+                    _log_qp_timing("qp_parse_json_error", job_id, time.time() - parse_start, extra=f"error={type(e).__name__}")
                     logger.error(f"JSON parse/validation error for query '{user_query}': {e}")
                     logger.error(f"Raw LLM response that failed to parse: {llm_response}")
                     logger.error(f"Exception type: {type(e).__name__}")
@@ -233,6 +254,8 @@ IMPORTANT: Respond with ONLY the JSON object. No additional text or explanations
                     logger.debug(f"  Intent type: {intent_type}")
                     logger.debug(f"  Is complex: {is_complex}")
                 
+                total_elapsed = time.time() - overall_start
+                _log_qp_timing("qp_enhance_total", job_id, total_elapsed)
                 return {
                     "original_query": user_query.strip(),
                     "concepts": concepts,
@@ -259,7 +282,9 @@ IMPORTANT: Respond with ONLY the JSON object. No additional text or explanations
                 logger.debug("  Starting LLM service failure fallback...")
                 
                 # Intelligent fallback when LLM service fails
+                fb_start = time.time()
                 concepts, enhanced_queries, intent_type, is_complex = self._intelligent_fallback_analysis(user_query)
+                _log_qp_timing("qp_fallback_analysis", job_id, time.time() - fb_start)
                 
                 logger.debug(f"LLM SERVICE FAILURE FALLBACK RESULTS:")
                 logger.debug(f"  Concepts: {concepts}")
@@ -267,6 +292,8 @@ IMPORTANT: Respond with ONLY the JSON object. No additional text or explanations
                 logger.debug(f"  Intent type: {intent_type}")
                 logger.debug(f"  Is complex: {is_complex}")
                 
+                total_elapsed = time.time() - overall_start
+                _log_qp_timing("qp_enhance_total", job_id, total_elapsed)
                 return {
                     "original_query": user_query.strip(),
                     "concepts": concepts,

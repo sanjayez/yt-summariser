@@ -10,8 +10,7 @@ import asyncio
 from typing import List, Dict, Tuple
 from collections import defaultdict
 
-from ai_utils.providers.gemini_llm import GeminiLLMProvider
-from ai_utils.services.llm_service import LLMService
+from ai_utils.services.registry import get_gemini_llm_service
 from ai_utils.services.vector_service import VectorService
 from ai_utils.providers.weaviate_store import WeaviateVectorStoreProvider
 from ai_utils.config import get_config
@@ -102,8 +101,7 @@ async def process_with_gemini_llm_async(prompt: str, max_retries: int = 2) -> Di
     """
     try:
         config = get_config()
-        llm_provider = GeminiLLMProvider(config=config)
-        llm_service = LLMService(provider=llm_provider)
+        llm_service = get_gemini_llm_service()
         
         for attempt in range(max_retries + 1):
             try:

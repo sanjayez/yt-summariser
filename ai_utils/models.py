@@ -160,7 +160,7 @@ class ChatMessage(BaseModel):
 class ChatRequest(BaseModel):
     """Chat completion request model"""
     messages: List[ChatMessage] = Field(..., description="List of chat messages", min_length=1)
-    model: str = Field(default="gpt-3.5-turbo", description="Chat model to use")
+    model: str = Field(default="gemini-2.5-flash", description="Chat model to use")
     temperature: float = Field(default=0.7, ge=0.0, le=2.0, description="Generation temperature")
     max_tokens: Optional[int] = Field(None, ge=1, description="Maximum tokens to generate")
     top_p: float = Field(default=1.0, ge=0.0, le=1.0, description="Top-p sampling")

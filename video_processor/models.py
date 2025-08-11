@@ -64,6 +64,7 @@ class VideoMetadata(models.Model):
     like_count = models.BigIntegerField(null=True, blank=True, help_text="Number of likes")
     comment_count = models.BigIntegerField(null=True, blank=True, help_text="Number of comments")
     channel_id = models.CharField(max_length=50, blank=True, help_text="YouTube channel ID")
+    channel_thumbnail = models.URLField(blank=True, help_text="Channel avatar/thumbnail URL")
     tags = models.JSONField(default=list, blank=True, help_text="Video tags for categorization")
     categories = models.JSONField(default=list, blank=True, help_text="YouTube categories")
     thumbnail = models.URLField(blank=True, help_text="Video thumbnail URL")
@@ -93,6 +94,11 @@ class VideoMetadata(models.Model):
         if self.video_id:
             return f"https://www.youtube.com/watch?v={self.video_id}"
         return ""
+    
+    @property
+    def channel_thumbnail_url(self):
+        """Alias for channel thumbnail used consistently across code paths"""
+        return self.channel_thumbnail
     
     def natural_key(self):
         """Return natural key for this model"""
@@ -137,6 +143,7 @@ class VideoTranscript(models.Model):
     # AI-generated summary fields
     summary = models.TextField(blank=True, null=True, help_text="AI-generated summary of the video content")
     key_points = models.JSONField(default=list, blank=True, help_text="List of key points extracted from the video")
+    chapters = models.JSONField(default=list, blank=True, help_text="List of chapters with one-line summaries: [{'chapter': int, 'title': str, 'summary': str}]")
     
     # Transcript source tracking
     TRANSCRIPT_SOURCES = [

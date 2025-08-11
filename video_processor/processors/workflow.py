@@ -1,6 +1,9 @@
 from celery import shared_task, chain, group
 from celery.exceptions import SoftTimeLimitExceeded
 import logging
+import time
+import os
+from temp_file_logger import append_line
 
 from api.models import URLRequestTable
 from ..config import YOUTUBE_CONFIG
@@ -16,6 +19,40 @@ from .embedding import embed_video_content
 from .status import update_overall_status
 
 logger = logging.getLogger(__name__)
+
+
+@shared_task(bind=True, name='video_processor.log_stage_duration', ignore_result=True)
+def log_stage_duration(self, parent_result, start_ts, stage_name, url_request_id):
+    """
+    Lightweight timing logger for pipeline stages. Triggered via Celery link callback.
+    """
+    try:
+        elapsed = max(0.0, time.time() - float(start_ts))
+        logger.info(f"⏱️ Stage timing: {stage_name} for request {url_request_id} took {elapsed:.2f}s")
+        # Also append to a simple file for later analysis
+        append_line(
+            file_path=os.getenv('TIMING_LOG_FILE', 'logs/stage_timings.log'),
+            message=f"stage={stage_name} request_id={url_request_id} elapsed_s={elapsed:.2f}"
+        )
+    except Exception as e:
+        logger.warning(f"Failed to log timing for {stage_name} ({url_request_id}): {e}")
+    # Do not return parent_result; this is a fire-and-forget logger
+    return None
+
+
+@shared_task(bind=True, name='video_processor.log_pipeline_total', ignore_result=True)
+def log_pipeline_total(self, url_request_id, pipeline_start_ts):
+    """Log total end-to-end pipeline time for a request."""
+    try:
+        total_elapsed = max(0.0, time.time() - float(pipeline_start_ts))
+        logger.info(f"⏱️ Pipeline total: request {url_request_id} took {total_elapsed:.2f}s end-to-end")
+        append_line(
+            file_path=os.getenv('TIMING_LOG_FILE', 'logs/stage_timings.log'),
+            message=f"pipeline_total request_id={url_request_id} elapsed_s={total_elapsed:.2f}"
+        )
+    except Exception as e:
+        logger.warning(f"Failed to log pipeline total for {url_request_id}: {e}")
+    return None
 
 
 @shared_task(bind=True, 
@@ -61,20 +98,56 @@ def process_youtube_video(self, url_request_id):
         # New pipeline: metadata → transcript → [content_analysis_preliminary + summary + classification] → embedding → content_analysis_finalization → status
         logger.info(f"Constructing workflow chain for request {url_request_id}")
         
-        workflow = chain(
-            extract_video_metadata.s(url_request_id),
-            extract_video_transcript.s(url_request_id),  # Pass url_request_id explicitly to ensure continuity
-            
-            # Parallel group: content analysis (phase 1), summary, and classification run together
-            group(
-                content_analysis_preliminary.s(url_request_id),
-                generate_video_summary.s(url_request_id),
-                classify_and_exclude_video_llm.s(url_request_id)
+        # Add timing links to each stage (non-blocking callbacks)
+        meta_start = time.time()
+        meta_sig = extract_video_metadata.s(url_request_id).set(
+            link=log_stage_duration.s(meta_start, 'extract_video_metadata', url_request_id)
+        )
+
+        transcript_start = time.time()
+        transcript_sig = extract_video_transcript.s(url_request_id).set(
+            link=log_stage_duration.s(transcript_start, 'extract_video_transcript', url_request_id)
+        )
+
+        # Parallel group: add timing links per child task
+        ca_start = time.time()
+        summary_start = time.time()
+        classify_start = time.time()
+        parallel_group = group(
+            content_analysis_preliminary.s(url_request_id).set(
+                link=log_stage_duration.s(ca_start, 'content_analysis_preliminary', url_request_id)
             ),
-            
-            embed_video_content.s(url_request_id),       # Pass url_request_id explicitly to ensure continuity
-            content_analysis_finalization.s(url_request_id), # Phase 2: add timestamps and ratios
-            update_overall_status.s(url_request_id)      # Pass url_request_id explicitly to ensure continuity
+            generate_video_summary.s(url_request_id).set(
+                link=log_stage_duration.s(summary_start, 'generate_video_summary', url_request_id)
+            ),
+            classify_and_exclude_video_llm.s(url_request_id).set(
+                link=log_stage_duration.s(classify_start, 'classify_and_exclude_video_llm', url_request_id)
+            )
+        )
+
+        embed_start = time.time()
+        embed_sig = embed_video_content.s(url_request_id).set(
+            link=log_stage_duration.s(embed_start, 'embed_video_content', url_request_id)
+        )
+
+        finalize_start = time.time()
+        finalize_sig = content_analysis_finalization.s(url_request_id).set(
+            link=log_stage_duration.s(finalize_start, 'content_analysis_finalization', url_request_id)
+        )
+
+        status_start = time.time()
+        status_sig = update_overall_status.s(url_request_id).set(
+            link=log_stage_duration.s(status_start, 'update_overall_status', url_request_id)
+        )
+
+        pipeline_start = time.time()
+        workflow = chain(
+            meta_sig,
+            transcript_sig,
+            parallel_group,
+            embed_sig,
+            finalize_sig,
+            status_sig.set(link=log_pipeline_total.s(url_request_id, pipeline_start)),
         )
         
         logger.info(f"Workflow chain constructed with parallel content analysis processing for request {url_request_id}")

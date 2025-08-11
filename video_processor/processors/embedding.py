@@ -30,7 +30,7 @@ from ..text_utils.chunking import (
     validate_embedding_text,
     prepare_batch_embeddings
 )
-from ai_utils.services.vector_service import VectorService
+from ai_utils.services.registry import get_vector_service
 from ai_utils.models import VectorDocument, VectorQuery
 
 logger = logging.getLogger(__name__)
@@ -43,12 +43,8 @@ def embed_video_content_sync(video_metadata: VideoMetadata, transcript: VideoTra
     try:
         # Initialize services with native Weaviate vectorization
         from ai_utils.config import get_config
-        from ai_utils.providers.weaviate_store import WeaviateVectorStoreProvider
-        from ai_utils.services.vector_service import VectorService
-        
         config = get_config()
-        vector_provider = WeaviateVectorStoreProvider(config)
-        vector_service = VectorService(vector_provider)
+        vector_service = get_vector_service()
         # No embedding service needed - Weaviate handles embeddings natively
         
         video_id = video_metadata.video_id
@@ -131,59 +127,62 @@ def embed_video_content_sync(video_metadata: VideoMetadata, transcript: VideoTra
         
         logger.info(f"Prepared {len(embedding_items)} items for embedding")
         
-        # Batch process using native Weaviate vectorization
-        batches = prepare_batch_embeddings(embedding_items, batch_size=15)
+        # Batch process using native Weaviate vectorization (use provider-configured batch size)
+        batches = prepare_batch_embeddings(embedding_items, batch_size=config.weaviate.batch_size or 100)
         total_embedded = 0
         failed_embeddings = []
         
-        for batch_idx, batch in enumerate(batches):
+        async def _process_one_batch(batch_idx: int, batch: List[Dict[str, Any]]) -> int:
             try:
                 logger.info(f"Processing batch {batch_idx + 1}/{len(batches)} with {len(batch)} items")
-                
-                # Create VectorDocuments without embeddings - Weaviate will generate them natively
-                vector_documents = []
-                for item in batch:
-                    vector_doc = VectorDocument(
-                        id=item['id'],  # Use our specific ID
+                vector_documents = [
+                    VectorDocument(
+                        id=item['id'],
                         text=item['text'],
-                        embedding=None,  # No embedding needed - Weaviate handles this natively
+                        embedding=None,
                         metadata=item['metadata']
-                    )
-                    vector_documents.append(vector_doc)
-                
-                # Upsert the documents - Weaviate will handle embedding generation
-                try:
-                    # Create a new event loop for this operation
-                    loop = asyncio.new_event_loop()
-                    asyncio.set_event_loop(loop)
-                    
-                    try:
-                        result = loop.run_until_complete(
-                            vector_service.upsert_documents(
-                                documents=vector_documents,
-                                job_id=f"embed_batch_{video_id}_{batch_idx}"
-                            )
-                        )
-                        
-                        if result and result.get('upserted_count', 0) > 0:
-                            total_embedded += result['upserted_count']
-                            logger.info(f"Successfully processed batch {batch_idx + 1}: {result['upserted_count']} items with native vectorization")
-                        else:
-                            logger.warning(f"Failed to process batch {batch_idx + 1}")
-                            failed_embeddings.extend([item['id'] for item in batch])
-                            
-                    finally:
-                        loop.close()
-                        
-                except Exception as embed_error:
-                    logger.error(f"Error processing batch {batch_idx + 1}: {embed_error}")
-                    failed_embeddings.extend([item['id'] for item in batch])
-                    continue
-                
-            except Exception as e:
-                logger.error(f"Error processing batch {batch_idx + 1}: {e}")
+                    ) for item in batch
+                ]
+                result = await vector_service.upsert_documents(
+                    documents=vector_documents,
+                    job_id=f"embed_batch_{video_id}_{batch_idx}"
+                )
+                return int(result.get('upserted_count', 0))
+            except Exception as embed_error:
+                logger.error(f"Error processing batch {batch_idx + 1}: {embed_error}")
                 failed_embeddings.extend([item['id'] for item in batch])
-                continue
+                return 0
+
+        # Run batches concurrently with a small cap (2–4)
+        concurrency = min(4, max(2, (config.max_concurrent_requests or 4)))
+        semaphore = asyncio.Semaphore(concurrency)
+
+        async def _guarded_process(idx: int, b: List[Dict[str, Any]]):
+            async with semaphore:
+                return await _process_one_batch(idx, b)
+
+        # Execute all batches in the current event loop
+        async def _run_all_batches():
+            tasks = [
+                _guarded_process(batch_idx, batch)
+                for batch_idx, batch in enumerate(batches)
+            ]
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+            return results
+
+        # Ensure we have an event loop to run async work
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        try:
+            results = loop.run_until_complete(_run_all_batches())
+        finally:
+            loop.close()
+
+        for res, batch in zip(results, batches):
+            if isinstance(res, Exception):
+                failed_embeddings.extend([item['id'] for item in batch])
+            else:
+                total_embedded += int(res or 0)
         
         # Update embedding status in database
         with transaction.atomic():
@@ -291,10 +290,10 @@ def embed_video_content(self, summary_result, url_request_id):
         if video_metadata.is_embedded:
             # Verify embeddings actually exist in vector store
             try:
-                # Get vector service instance
+                # Get shared vector service instance
                 from ai_utils.config import get_config
                 config = get_config()
-                vector_service = VectorService(config=config)
+                vector_service = get_vector_service()
                 
                 # Check if vectors exist for this video in the vector store
                 test_query = VectorQuery(
@@ -306,7 +305,6 @@ def embed_video_content(self, summary_result, url_request_id):
                 # Create event loop for idempotency check
                 loop = asyncio.new_event_loop()
                 asyncio.set_event_loop(loop)
-                
                 try:
                     search_result = loop.run_until_complete(
                         vector_service.search_similar(query=test_query)

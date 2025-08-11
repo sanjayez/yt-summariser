@@ -15,7 +15,7 @@ class VideoMetadataAdmin(admin.ModelAdmin):
             'fields': ('video_id', 'title', 'description', 'duration', 'duration_string', 'language', 'upload_date')
         }),
         ('Channel Info', {
-            'fields': ('channel_name', 'channel_id', 'uploader_id', 'channel_follower_count', 'channel_is_verified')
+            'fields': ('channel_name', 'channel_id', 'uploader_id', 'channel_follower_count', 'channel_is_verified', 'channel_thumbnail')
         }),
         ('Engagement', {
             'fields': ('view_count', 'like_count', 'comment_count', 'engagement', 'engagement_preview')

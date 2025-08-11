@@ -92,25 +92,33 @@ class ResponseService:
         if not video_metadata:
             return {}
         
-        # Format description with truncation
-        description = video_metadata.description
-        if description and len(description) > 200:
-            description = description[:200] + '...'
-        
+        # Include all fields from VideoMetadata in the API response (no truncation)
+        vm = video_metadata
         return {
-            'video_id': video_metadata.video_id,
-            'title': video_metadata.title,
-            'description': description,
-            'duration': video_metadata.duration,
-            'duration_string': video_metadata.duration_string,
-            'channel_name': video_metadata.channel_name,
-            'view_count': video_metadata.view_count,
-            'like_count': video_metadata.like_count,
-            'upload_date': video_metadata.upload_date.isoformat() if video_metadata.upload_date else None,
-            'language': video_metadata.language,
-            'tags': video_metadata.tags[:10] if video_metadata.tags else [],  # Limit tags
-            'youtube_url': str(video_metadata.webpage_url),
-            'thumbnail': str(video_metadata.thumbnail) if video_metadata.thumbnail else None
+            'video_id': vm.video_id,
+            'title': vm.title,
+            'description': vm.description,
+            'duration': vm.duration,
+            'duration_string': vm.duration_string,
+            'channel_name': vm.channel_name,
+            'channel_id': vm.channel_id,
+            'uploader_id': vm.uploader_id,
+            'channel_thumbnail': (str(vm.channel_thumbnail) if vm.channel_thumbnail else None),
+            'thumbnail': (str(vm.thumbnail) if vm.thumbnail else None),
+            'youtube_url': str(vm.webpage_url),
+            'view_count': vm.view_count,
+            'like_count': vm.like_count,
+            'comment_count': vm.comment_count,
+            'channel_follower_count': vm.channel_follower_count,
+            'channel_is_verified': vm.channel_is_verified,
+            'language': vm.language,
+            'upload_date': (vm.upload_date.isoformat() if vm.upload_date else None),
+            'tags': vm.tags or [],
+            'categories': vm.categories or [],
+            'engagement': vm.engagement or [],
+            'is_embedded': vm.is_embedded,
+            'status': vm.status,
+            'created_at': (vm.created_at.isoformat() if vm.created_at else None),
         }
     
     def format_search_sources(self, results: List[Dict[str, Any]], video_metadata=None) -> List[Dict[str, Any]]:

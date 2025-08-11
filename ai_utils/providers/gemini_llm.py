@@ -5,6 +5,7 @@ Provides a wrapper around LlamaIndex's GoogleGenerativeAI for seamless integrati
 
 import time
 import logging
+import os
 from typing import List, Optional, Dict, Any
 from ..interfaces.llm import LLMProvider
 from ..models import (
@@ -13,6 +14,7 @@ from ..models import (
     TextGenerationRequest, TextGenerationResponse
 )
 from ..config import AIConfig
+from temp_file_logger import append_line
 
 logger = logging.getLogger(__name__)
 
@@ -41,12 +43,14 @@ class GeminiLLMProvider(LLMProvider):
             )
         
         self.config = config
-        self.gemini_llm = GoogleGenAI(
+        # Cache of subclients keyed by (model, temperature, max_tokens)
+        self._client_cache: Dict[tuple, Any] = {}
+        # Preload default client
+        self._client_cache[(config.gemini.model, config.gemini.temperature, config.gemini.max_tokens)] = GoogleGenAI(
             model=config.gemini.model,
             api_key=config.gemini.api_key,
             temperature=config.gemini.temperature,
-            max_tokens=8000,  # Very high limit to prevent MAX_TOKENS errors completely
-            # LlamaIndex handles these parameters internally
+            max_tokens=config.gemini.max_tokens or 8000,
             timeout=config.gemini.timeout,
         )
         
@@ -77,17 +81,21 @@ class GeminiLLMProvider(LLMProvider):
         """Generate text from a prompt using LlamaIndex Gemini integration"""
         try:
             # Configure generation parameters
-            if temperature != self.config.gemini.temperature:
-                # Create new instance with different temperature if needed
+            key = (
+                self.config.gemini.model,
+                temperature if temperature is not None else self.config.gemini.temperature,
+                max_tokens if max_tokens is not None else self.config.gemini.max_tokens,
+            )
+            gemini_llm = self._client_cache.get(key)
+            if gemini_llm is None:
                 gemini_llm = GoogleGenAI(
-                    model=self.config.gemini.model,
+                    model=key[0],
                     api_key=self.config.gemini.api_key,
-                    temperature=temperature,
-                    max_tokens=max_tokens or self.config.gemini.max_tokens,
+                    temperature=key[1],
+                    max_tokens=key[2] or self.config.gemini.max_tokens,
                     timeout=self.config.gemini.timeout,
                 )
-            else:
-                gemini_llm = self.gemini_llm
+                self._client_cache[key] = gemini_llm
             
             # Handle system prompt by prepending to user prompt
             full_prompt = prompt
@@ -122,24 +130,37 @@ class GeminiLLMProvider(LLMProvider):
                 li_messages.append(LIMessage(role=role, content=msg.content))
             
             # Configure Gemini with request parameters if different from defaults
-            if (request.temperature != self.config.gemini.temperature or 
-                request.max_tokens != self.config.gemini.max_tokens):
+            model = request.model or self.config.gemini.model
+            temperature = request.temperature if request.temperature is not None else self.config.gemini.temperature
+            max_tokens = request.max_tokens if request.max_tokens is not None else self.config.gemini.max_tokens
+            key = (model, temperature, max_tokens)
+            gemini_llm = self._client_cache.get(key)
+            if gemini_llm is None:
                 gemini_llm = GoogleGenAI(
-                    model=request.model or self.config.gemini.model,
+                    model=model,
                     api_key=self.config.gemini.api_key,
-                    temperature=request.temperature or self.config.gemini.temperature,
-                    max_tokens=request.max_tokens or self.config.gemini.max_tokens,
+                    temperature=temperature,
+                    max_tokens=max_tokens,
                     timeout=self.config.gemini.timeout,
                 )
-            else:
-                gemini_llm = self.gemini_llm
+                self._client_cache[key] = gemini_llm
             
+            # File log (inputs)
+            try:
+                total_chars = sum(len(m.content or "") for m in request.messages)
+                append_line(
+                    os.getenv('TIMING_LOG_FILE', 'logs/stage_timings.log'),
+                    f"gemini_call model={model} temp={temperature} max_tokens={max_tokens} msgs={len(request.messages)} chars={total_chars}"
+                )
+            except Exception:
+                pass
+
             # Use LlamaIndex's chat method
             response = await gemini_llm.achat(li_messages)
             
             # Convert LlamaIndex response back to our format
             # Note: LlamaIndex response might not have all fields, so we'll populate what we can
-            return ChatResponse(
+            chat_response = ChatResponse(
                 id=f"gemini-{int(time.time())}", 
                 object="chat.completion",
                 created=int(time.time()),
@@ -161,9 +182,28 @@ class GeminiLLMProvider(LLMProvider):
                 ),
                 system_fingerprint=None
             )
+
+            # File log (outputs)
+            try:
+                out_len = len(chat_response.choices[0].message.content or "")
+                append_line(
+                    os.getenv('TIMING_LOG_FILE', 'logs/stage_timings.log'),
+                    f"gemini_resp model={model} status=completed out_chars={out_len}"
+                )
+            except Exception:
+                pass
+
+            return chat_response
             
         except Exception as e:
             logger.error(f"Error in Gemini chat completion: {str(e)}")
+            try:
+                append_line(
+                    os.getenv('TIMING_LOG_FILE', 'logs/stage_timings.log'),
+                    f"gemini_error model={request.model or self.config.gemini.model} err={str(e).replace('\n',' ')[:300]}"
+                )
+            except Exception:
+                pass
             raise
     
     async def generate_text_with_response(
