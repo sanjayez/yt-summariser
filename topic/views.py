@@ -244,7 +244,7 @@ class SearchAndProcessAPIView(APIView):
                                 url_request.save()
                                 
                                 # Trigger video processing
-                                process_youtube_video.delay(url_request.id)
+                                process_youtube_video.delay(str(url_request.request_id))
                                 
                                 video_requests.append({
                                     'request_id': str(url_request.request_id),

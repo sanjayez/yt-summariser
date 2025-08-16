@@ -235,7 +235,7 @@ def embed_video_content(self, summary_result, url_request_id):
     
     Args:
         summary_result (dict): Result from previous summary generation task
-        url_request_id (int): ID of the URLRequestTable to process
+        url_request_id (str): UUID of the URLRequestTable to process
         
     Returns:
         dict: Embedding results with total items embedded and processing stats
@@ -256,7 +256,7 @@ def embed_video_content(self, summary_result, url_request_id):
         # Get video metadata and transcript
         url_request = URLRequestTable.objects.select_related(
             'video_metadata'
-        ).get(id=url_request_id)
+        ).get(request_id=url_request_id)
         
         # Check if video is excluded (skip embedding for excluded videos)
         if url_request.failure_reason == 'excluded':
@@ -374,7 +374,7 @@ def embed_video_content(self, summary_result, url_request_id):
                 if not url_request:
                     url_request = URLRequestTable.objects.select_related(
                     'video_metadata'
-                ).get(id=url_request_id)
+                ).get(request_id=url_request_id)
                 
                 if hasattr(url_request, 'video_metadata'):
                     video_metadata = url_request.video_metadata

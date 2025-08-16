@@ -167,7 +167,7 @@ def extract_video_transcript(self, metadata_result, url_request_id):
     
     Args:
         metadata_result (dict): Result from previous metadata extraction task
-        url_request_id (int): ID of the URLRequestTable to process
+        url_request_id (str): UUID of the URLRequestTable to process
         
     Returns:
         dict: Transcript extraction results with segments count and language info
@@ -196,7 +196,7 @@ def extract_video_transcript(self, metadata_result, url_request_id):
         progress_recorder.set_progress(0, 100, description="Starting transcript extraction")
         
         # Get URL request and video metadata
-        url_request = URLRequestTable.objects.get(id=url_request_id)
+        url_request = URLRequestTable.objects.get(request_id=url_request_id)
         video_metadata = VideoMetadata.objects.get(url_request=url_request)
         video_id = video_metadata.video_id
         
@@ -328,7 +328,7 @@ def extract_video_transcript(self, metadata_result, url_request_id):
         
         try:
             # Update URLRequest with failure reason
-            url_request = URLRequestTable.objects.get(id=url_request_id)
+            url_request = URLRequestTable.objects.get(request_id=url_request_id)
             url_request.failure_reason = 'no_transcript'
             url_request.save()
             
@@ -359,7 +359,7 @@ def extract_video_transcript(self, metadata_result, url_request_id):
         with transaction.atomic():
             try:
                 # Update URLRequest with failure reason
-                url_request = URLRequestTable.objects.get(id=url_request_id)
+                url_request = URLRequestTable.objects.get(request_id=url_request_id)
                 url_request.failure_reason = 'no_transcript'
                 url_request.save()
                 

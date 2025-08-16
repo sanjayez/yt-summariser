@@ -294,7 +294,7 @@ def process_search_results(self, search_id: str):
              autoretry_for=(Exception,),
              retry_backoff=YOUTUBE_CONFIG['RETRY_CONFIG']['status_update']['backoff'],
              retry_jitter=YOUTUBE_CONFIG['RETRY_CONFIG']['status_update']['jitter'])
-def finalize_search_processing(self, processing_results: List[Any], search_id: str, url_request_ids: List[int]):
+def finalize_search_processing(self, processing_results: List[Any], search_id: str, url_request_ids: List[str]):
     """
     Completion monitoring system for parallel processing.
     
@@ -304,7 +304,7 @@ def finalize_search_processing(self, processing_results: List[Any], search_id: s
     Args:
         processing_results: Results from parallel video processing tasks
         search_id: UUID of the SearchRequest
-        url_request_ids: List of URLRequestTable IDs that were processed
+        url_request_ids: List of URLRequestTable UUIDs that were processed
         
     Returns:
         dict: Final processing result
@@ -395,7 +395,7 @@ def finalize_search_processing(self, processing_results: List[Any], search_id: s
         }
 
 
-def _create_url_request_entries(search_request: SearchRequestModel, video_urls: List[str]) -> List[int]:
+def _create_url_request_entries(search_request: SearchRequestModel, video_urls: List[str]) -> List[str]:
     """
     Create URLRequestTable entries for each video URL.
     Includes pre-filtering to exclude known problematic videos.
@@ -405,7 +405,7 @@ def _create_url_request_entries(search_request: SearchRequestModel, video_urls: 
         video_urls: List of YouTube video URLs
         
     Returns:
-        List[int]: List of URLRequestTable IDs (not UUIDs) for processable videos
+        List[str]: List of URLRequestTable UUIDs for processable videos
     """
     from video_processor.utils import filter_excluded_videos
     
@@ -446,25 +446,25 @@ def _create_url_request_entries(search_request: SearchRequestModel, video_urls: 
             URLRequestTable.objects.filter(
                 search_request=search_request,
                 url__in=processable_urls  # Use processable_urls instead of original video_urls
-            ).values_list('id', flat=True)  # Use 'id' not 'request_id' for URLRequestTable primary key
+            ).values_list('request_id', flat=True)  # Use 'request_id' UUID for URLRequestTable
         )
     
     return created_ids
 
 
-def _analyze_processing_results(url_request_ids: List[int]) -> Dict[str, Any]:
+def _analyze_processing_results(url_request_ids: List[str]) -> Dict[str, Any]:
     """
     Analyze the results of parallel video processing.
     
     Args:
-        url_request_ids: List of URLRequestTable IDs
+        url_request_ids: List of URLRequestTable UUIDs
         
     Returns:
         Dict with processing statistics
     """
     try:
         # Get current status of all URLRequestTable entries
-        url_requests = URLRequestTable.objects.filter(id__in=url_request_ids)
+        url_requests = URLRequestTable.objects.filter(request_id__in=url_request_ids)
         
         total_videos = len(url_request_ids)
         successful_videos = url_requests.filter(status='success').count()

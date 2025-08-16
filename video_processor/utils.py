@@ -196,14 +196,13 @@ def _resolve_request_uuid(task_instance) -> Optional[str]:
         # Fallback: scan args (often last positional arg)
         if url_request_id is None and hasattr(task_instance.request, 'args'):
             for arg in reversed(task_instance.request.args or []):
-                if isinstance(arg, int):
+                if isinstance(arg, (int, str)):  # Accept UUID string or other formats
                     url_request_id = arg
                     break
         if url_request_id is None:
             return None
-        # Minimal, single-field lookup
-        req = URLRequestTable.objects.only('request_id').get(id=url_request_id)
-        return str(req.request_id)
+        # Convert to string if needed (request_id is now always UUID)
+        return str(url_request_id)
     except Exception:
         return None
 

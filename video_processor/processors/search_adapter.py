@@ -28,7 +28,7 @@ logger = logging.getLogger(__name__)
              autoretry_for=(Exception,),
              retry_backoff=YOUTUBE_CONFIG['RETRY_CONFIG']['metadata']['backoff'],
              retry_jitter=YOUTUBE_CONFIG['RETRY_CONFIG']['metadata']['jitter'])
-def process_search_video(self, url_request_id: int):
+def process_search_video(self, url_request_id: str):
     """
     Video processing adapter for search-generated videos.
     
@@ -37,7 +37,7 @@ def process_search_video(self, url_request_id: int):
     linking between SearchRequest → URLRequestTable → VideoMetadata.
     
     Args:
-        url_request_id: ID (not UUID) of the URLRequestTable entry
+        url_request_id: UUID of the URLRequestTable entry
         
     Returns:
         dict: Processing result with status and details
@@ -52,7 +52,7 @@ def process_search_video(self, url_request_id: int):
             url_request = URLRequestTable.objects.select_related(
                 'search_request', 
                 'search_request__search_session'
-            ).get(id=url_request_id)  # Use id (int) not request_id (UUID)
+            ).get(request_id=url_request_id)  # Use request_id (UUID)
             
             logger.info(f"Processing video {url_request.url} for search request {url_request.search_request.search_id}")
             
@@ -105,7 +105,7 @@ def process_search_video(self, url_request_id: int):
         
         # Delegate to main video processing workflow
         try:
-            result = process_youtube_video.delay(url_request_id)
+            result = process_youtube_video.delay(str(url_request_id))
             logger.info(f"Delegated processing to workflow task {result.id}")
             
             return {
@@ -166,7 +166,7 @@ def process_search_video(self, url_request_id: int):
              autoretry_for=(Exception,),
              retry_backoff=YOUTUBE_CONFIG['RETRY_CONFIG']['status_update']['backoff'],
              retry_jitter=YOUTUBE_CONFIG['RETRY_CONFIG']['status_update']['jitter'])
-def update_search_video_status(self, url_request_id: int, status: str, message: str = None):
+def update_search_video_status(self, url_request_id: str, status: str, message: str = None):
     """
     Update the status of a video processing task for search-generated videos.
     
@@ -190,7 +190,7 @@ def update_search_video_status(self, url_request_id: int, status: str, message: 
         try:
             url_request = URLRequestTable.objects.select_related(
                 'search_request'
-            ).get(id=url_request_id)
+            ).get(request_id=url_request_id)
             
         except URLRequestTable.DoesNotExist:
             error_msg = f"URLRequestTable entry {url_request_id} not found"
@@ -296,7 +296,7 @@ def get_search_video_results(self, search_id: str):
         results = []
         for url_request in url_requests:
             video_result = {
-                'url_request_id': url_request.id,
+                'url_request_id': url_request.request_id,
                 'url': url_request.url,
                 'status': url_request.status,
                 'video_data': None

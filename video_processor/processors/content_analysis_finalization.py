@@ -45,7 +45,7 @@ def content_analysis_finalization(self, embedding_result, url_request_id):
     
     Args:
         embedding_result: Result from embedding task
-        url_request_id: ID of the URLRequestTable to process
+        url_request_id: UUID of the URLRequestTable to process
         
     Returns:
         dict: Final analysis results summary
@@ -71,7 +71,7 @@ def content_analysis_finalization(self, embedding_result, url_request_id):
             'video_metadata',
             'video_metadata__video_transcript',
             'video_metadata__video_transcript__content_analysis'
-        ).get(id=url_request_id)
+        ).get(request_id=url_request_id)
         
         if not hasattr(url_request, 'video_metadata') or not url_request.video_metadata:
             raise ValueError("VideoMetadata not found")

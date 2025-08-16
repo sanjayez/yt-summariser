@@ -31,7 +31,7 @@ def update_overall_status(self, embedding_result, url_request_id):
     
     Args:
         embedding_result (dict): Result from previous embedding task
-        url_request_id (int): ID of the URLRequestTable to process
+        url_request_id (str): UUID of the URLRequestTable to process
         
     Returns:
         str: Status update result message
@@ -45,7 +45,7 @@ def update_overall_status(self, embedding_result, url_request_id):
     if embedding_result and embedding_result.get('excluded'):
         logger.info(f"Video was excluded - ensuring final status is correctly set: {embedding_result.get('exclusion_reason')}")
         # Get URLRequest and ensure it's marked as excluded (not processing)
-        url_request = URLRequestTable.objects.get(id=url_request_id)
+        url_request = URLRequestTable.objects.get(request_id=url_request_id)
         if url_request.status == 'processing':
             url_request.status = 'failed'
             url_request.failure_reason = 'excluded'
@@ -65,7 +65,7 @@ def update_overall_status(self, embedding_result, url_request_id):
         url_request = URLRequestTable.objects.select_related(
             'video_metadata',
             'video_metadata__video_transcript'
-        ).get(id=url_request_id)
+        ).get(request_id=url_request_id)
         
         logger.info(f"Updating overall status for request {url_request_id}")
         

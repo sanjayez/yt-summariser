@@ -45,7 +45,7 @@ def content_analysis_preliminary(self, transcript_result, url_request_id):
     
     Args:
         transcript_result: Result from transcript extraction task
-        url_request_id: ID of the URLRequestTable to process
+        url_request_id: UUID of the URLRequestTable to process
         
     Returns:
         dict: Preliminary analysis results summary
@@ -70,7 +70,7 @@ def content_analysis_preliminary(self, transcript_result, url_request_id):
         url_request = URLRequestTable.objects.select_related(
             'video_metadata',
             'video_metadata__video_transcript'
-        ).get(id=url_request_id)
+        ).get(request_id=url_request_id)
         
         if not hasattr(url_request, 'video_metadata') or not url_request.video_metadata:
             raise ValueError("VideoMetadata not found")

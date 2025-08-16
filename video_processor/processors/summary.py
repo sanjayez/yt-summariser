@@ -546,7 +546,7 @@ def generate_video_summary(self, transcript_result, url_request_id):
     
     Args:
         transcript_result (dict): Result from previous transcript extraction task
-        url_request_id (int): ID of the URLRequestTable to process
+        url_request_id (str): UUID of the URLRequestTable to process
         
     Returns:
         dict: Summary generation results with length and key points count
@@ -579,7 +579,7 @@ def generate_video_summary(self, transcript_result, url_request_id):
         # Get video metadata and transcript
         url_request = URLRequestTable.objects.select_related(
             'video_metadata'
-        ).get(id=url_request_id)
+        ).get(request_id=url_request_id)
         
         if not hasattr(url_request, 'video_metadata'):
             raise ValueError("VideoMetadata not found for this request")
@@ -657,7 +657,7 @@ def generate_video_summary(self, transcript_result, url_request_id):
                 if not url_request:
                     url_request = URLRequestTable.objects.select_related(
                         'video_metadata'
-                    ).get(id=url_request_id)
+                    ).get(request_id=url_request_id)
                 
                 if (hasattr(url_request, 'video_metadata') and 
                     hasattr(url_request.video_metadata, 'video_transcript')):

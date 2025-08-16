@@ -333,7 +333,7 @@ def classify_and_exclude_video_llm(self, previous_result, url_request_id):
     Args:
         self: Celery task instance (for retry functionality)
         previous_result: Result from previous task in chain
-        url_request_id: ID of URLRequest being processed
+        url_request_id: UUID of URLRequest being processed
         
     Returns:
         Dict with classification results and processing status
@@ -353,7 +353,7 @@ def classify_and_exclude_video_llm(self, previous_result, url_request_id):
     try:
         # Get video data with validation
         try:
-            video_metadata = VideoMetadata.objects.get(url_request__id=url_request_id)
+            video_metadata = VideoMetadata.objects.get(url_request__request_id=url_request_id)
         except VideoMetadata.DoesNotExist:
             logger.error(f"VideoMetadata not found for URL request {url_request_id}")
             return {

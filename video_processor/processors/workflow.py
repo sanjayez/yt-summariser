@@ -70,7 +70,7 @@ def process_youtube_video(self, url_request_id):
     Features parallel processing of content analysis, summary, and classification tasks
     
     Args:
-        url_request_id (int): ID of the URLRequestTable to process
+        url_request_id (str): UUID of the URLRequestTable to process
         
     Returns:
         str: Success message with request ID
@@ -85,7 +85,7 @@ def process_youtube_video(self, url_request_id):
         url_request = URLRequestTable.objects.select_related(
             'video_metadata',
             'video_metadata__video_transcript'
-        ).get(id=url_request_id)
+        ).get(request_id=url_request_id)
         validate_youtube_url(url_request.url)
         
         # Store task ID for progress tracking
@@ -202,7 +202,7 @@ def process_parallel_videos(self, url_request_ids):
     Each video goes through the complete pipeline independently and concurrently.
     
     Args:
-        url_request_ids (list): List of URLRequestTable IDs to process
+        url_request_ids (list): List of URLRequestTable UUIDs to process
         
     Returns:
         dict: Processing result with parallel job information
@@ -211,9 +211,9 @@ def process_parallel_videos(self, url_request_ids):
     
     try:
         # Validate all URL requests exist
-        existing_requests = URLRequestTable.objects.filter(id__in=url_request_ids)
+        existing_requests = URLRequestTable.objects.filter(request_id__in=url_request_ids)
         if existing_requests.count() != len(url_request_ids):
-            missing_ids = set(url_request_ids) - set(existing_requests.values_list('id', flat=True))
+            missing_ids = set(url_request_ids) - set(existing_requests.values_list('request_id', flat=True))
             logger.error(f"Missing URLRequestTable entries: {missing_ids}")
             return {
                 'status': 'failed',
@@ -245,7 +245,7 @@ def process_parallel_videos(self, url_request_ids):
         
         try:
             # Mark all URL requests as failed due to orchestration timeout
-            URLRequestTable.objects.filter(id__in=url_request_ids).update(
+            URLRequestTable.objects.filter(request_id__in=url_request_ids).update(
                 status='failed',
                 failure_reason='technical_failure'
             )

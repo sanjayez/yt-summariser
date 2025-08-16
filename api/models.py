@@ -17,7 +17,7 @@ class URLRequestTable(models.Model):
         ('technical_failure', 'Technical Failure'),
     ]
     
-    request_id = models.UUIDField(default=uuid.uuid4, editable=False, unique=True)
+    request_id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     search_request = models.ForeignKey(
         'topic.SearchRequest', 
         on_delete=models.CASCADE,

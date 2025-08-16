@@ -144,7 +144,7 @@ def extract_video_metadata(self, url_request_id):
     Extract metadata for a YouTube video using yt-dlp.
     
     Args:
-        url_request_id (int): ID of the URLRequestTable to process
+        url_request_id (str): UUID of the URLRequestTable to process
         
     Returns:
         dict: Video metadata with video_id and title
@@ -154,7 +154,7 @@ def extract_video_metadata(self, url_request_id):
     """
     try:
         # Get the URL request
-        url_request = URLRequestTable.objects.get(id=url_request_id)
+        url_request = URLRequestTable.objects.get(request_id=url_request_id)
         
         logger.info(f"Starting metadata extraction for request {url_request_id}")
         logger.info(f"Extracting metadata for {url_request.url}")
@@ -243,7 +243,7 @@ def extract_video_metadata(self, url_request_id):
         logger.error(f"Unexpected error in metadata extraction for {url_request_id}: {str(e)}")
         
         try:
-            url_request = URLRequestTable.objects.get(id=url_request_id)
+            url_request = URLRequestTable.objects.get(request_id=url_request_id)
             _handle_metadata_business_failure(url_request, str(e))
         except:
             pass

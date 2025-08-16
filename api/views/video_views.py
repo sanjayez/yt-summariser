@@ -69,7 +69,7 @@ async def process_single_video(request: HttpRequest) -> JsonResponse:
         
         # Trigger existing Celery workflow (NO CHANGES to video_processor)
         from video_processor.processors.workflow import process_youtube_video
-        await sync_to_async(process_youtube_video.delay)(url_request.id)
+        await sync_to_async(process_youtube_video.delay)(str(url_request.request_id))
         
         # Prepare validated response with progress stream URL
         stream_url = reverse('video_status_stream', kwargs={'request_id': url_request.request_id})
