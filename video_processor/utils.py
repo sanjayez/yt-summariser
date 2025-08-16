@@ -1,11 +1,19 @@
 import hashlib
 import logging
+import json
+import time as _time
 from datetime import datetime
 from contextlib import contextmanager
 from functools import wraps
+from typing import Optional
+
+import redis
+from django.conf import settings
 from django.core.cache import cache
 from django.db import transaction
 from django.utils import timezone
+
+from api.models import URLRequestTable
 
 logger = logging.getLogger(__name__)
 
@@ -146,3 +154,113 @@ def update_task_progress(task_instance, step, progress_percent, meta=None):
     except Exception as e:
         logger.warning(f"Failed to update task progress: {e}")
         # Don't raise the exception, just log it
+
+    # ----------------------------------------------------------------------------------
+    # Minimal SSE publishing for single-video progress via Redis pub/sub
+    # Channel: video.{request_uuid}.progress
+    # Messages mirror topic stream schema: stage_start, stage_progress, stage_complete, complete, error
+    # ----------------------------------------------------------------------------------
+    try:
+        # Feature flag (default True for MVP); allow turning off via settings
+        publish_enabled = getattr(settings, 'VIDEO_SSE_PUBLISH', True)
+        if not publish_enabled:
+            return
+
+        request_uuid = _resolve_request_uuid(task_instance)
+        if not request_uuid:
+            return
+
+        message_type, payload = _build_video_progress_payload(step, progress_percent, meta or {})
+        if not message_type:
+            return
+
+        channel = f"video.{request_uuid}.progress"
+        _publish_to_redis(channel, {
+            'type': message_type,
+            'request_id': str(request_uuid),
+            'timestamp': _time.time(),
+            **payload
+        })
+    except Exception as pub_error:
+        # Never fail the task due to progress pub issues
+        logger.debug(f"Non-fatal: failed to publish video progress update: {pub_error}")
+
+
+def _resolve_request_uuid(task_instance) -> Optional[str]:
+    """Try to resolve URLRequestTable.request_id (UUID string) from Celery task args/kwargs."""
+    try:
+        url_request_id = None
+        # Prefer kwargs
+        if hasattr(task_instance.request, 'kwargs') and task_instance.request.kwargs:
+            url_request_id = task_instance.request.kwargs.get('url_request_id')
+        # Fallback: scan args (often last positional arg)
+        if url_request_id is None and hasattr(task_instance.request, 'args'):
+            for arg in reversed(task_instance.request.args or []):
+                if isinstance(arg, int):
+                    url_request_id = arg
+                    break
+        if url_request_id is None:
+            return None
+        # Minimal, single-field lookup
+        req = URLRequestTable.objects.only('request_id').get(id=url_request_id)
+        return str(req.request_id)
+    except Exception:
+        return None
+
+
+def _build_video_progress_payload(step: str, progress: int | float, meta: dict) -> tuple[Optional[str], dict]:
+    """Map internal step/progress to topic-like SSE payload."""
+    step_l = (step or '').lower()
+
+    # Terminal completion
+    if 'completed' in step_l or step_l == 'completed':
+        return 'complete', {'message': 'Processing completed'}
+
+    # Determine stage name
+    stage = None
+    if 'metadata' in step_l:
+        stage = 'METADATA'
+    elif 'transcript' in step_l:
+        stage = 'TRANSCRIPT'
+    elif 'summary' in step_l:
+        stage = 'SUMMARY'
+    elif 'embed' in step_l:
+        stage = 'EMBEDDING'
+    elif 'status' in step_l:
+        stage = 'STATUS'
+    elif 'analyz' in step_l:
+        stage = 'ANALYZING'
+
+    if not stage:
+        # Unknown stage; skip publish
+        return None, {}
+
+    # Choose message type based on progress
+    try:
+        p = float(progress)
+    except Exception:
+        p = 0.0
+
+    if p <= 0:
+        msg_type = 'stage_start'
+    elif p >= 100:
+        msg_type = 'stage_complete'
+    else:
+        msg_type = 'stage_progress'
+
+    payload = {
+        'stage': stage,
+        'message': meta.get('description') or meta.get('message') or stage.capitalize(),
+        'progress': round(p, 1),
+        'stage_progress': round(p, 1)
+    }
+    return msg_type, payload
+
+
+def _publish_to_redis(channel: str, payload: dict) -> None:
+    """Publish JSON payload to Redis pub/sub on DB 3 (like topic explorer)."""
+    host = getattr(settings, 'REDIS_HOST', 'localhost')
+    port = getattr(settings, 'REDIS_PORT', 6379)
+    client = redis.Redis(host=host, port=port, db=3, decode_responses=True)
+    # Will raise on connection issues; caller wraps
+    client.publish(channel, json.dumps(payload))

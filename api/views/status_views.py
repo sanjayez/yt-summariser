@@ -1,28 +1,30 @@
 """
-Status Views - Handles real-time video processing status streaming.
-Contains clean async views for Server-Sent Events (SSE) status updates.
+Status Views - Handles real-time video processing status streaming via Redis.
+Contains views for Server-Sent Events (SSE) status updates using Redis pub/sub only.
 """
 import json
 import time
-from typing import Generator, Dict, Any
+from typing import AsyncGenerator
 from django.http import StreamingHttpResponse, HttpRequest
+from django.conf import settings
 from django.views.decorators.http import require_http_methods
-# No async operations needed in status_views, removing unused import
 from uuid import UUID
 
 from telemetry import get_logger, handle_exceptions
-from ..models import URLRequestTable
-from ..services.response_service import ResponseService
 from video_processor.config import API_CONFIG
+
+try:
+    from redis.asyncio import Redis as AsyncRedis
+except Exception:
+    AsyncRedis = None
 
 
 logger = get_logger(__name__)
-response_service = ResponseService()
 
 
 @require_http_methods(["GET"])
 @handle_exceptions(reraise=True)
-def video_status_stream(request: HttpRequest, request_id: UUID) -> StreamingHttpResponse:
+async def video_status_stream(request: HttpRequest, request_id: UUID) -> StreamingHttpResponse:
     """
     Stream real-time status updates for video processing.
     
@@ -46,156 +48,89 @@ def video_status_stream(request: HttpRequest, request_id: UUID) -> StreamingHttp
         StreamingHttpResponse with text/event-stream content
     """
     
-    def event_stream() -> Generator[str, None, None]:
+    async def event_stream() -> AsyncGenerator[str, None]:
         """
         Generate Server-Sent Events for video processing status.
         
-        This function polls the database at configured intervals and yields
-        formatted SSE data until processing is complete or fails.
+        Uses Redis pub/sub to stream updates until a terminal event is received
+        or a timeout occurs.
         
         Yields:
             str: Formatted SSE data strings
         """
-        max_attempts = API_CONFIG['POLLING']['status_check_max_attempts']
-        poll_interval = API_CONFIG['POLLING']['status_check_interval']
-        attempts = 0
-        
         logger.info(f"Starting status stream for request: {request_id}")
+
+        # Send initial comment and a sane client reconnect delay to avoid rapid reconnect loops
+        yield f": connected {request_id}\n\n"
+        yield "retry: 3000\n\n"
+        # Padding to defeat proxy/buffer delays and force immediate flush
+        yield f": padding {' ' * 4096}\n\n"
         
-        # Maximum time based on config (max_attempts * poll_interval seconds)
-        while attempts < max_attempts:
-            try:
-                # Get URL request with related data to avoid N+1 queries
-                url_request = URLRequestTable.objects.select_related(
-                    'video_metadata',
-                    'video_metadata__video_transcript'
-                ).get(request_id=request_id)
-                
-                # Build enhanced status data
-                status_data = _build_status_data(url_request)
-                
-                # Send data as SSE
-                yield f"data: {json.dumps(status_data)}\\n\\n"
-                
-                # Stop streaming if processing is complete
-                if url_request.status in ['success', 'failed']:
-                    logger.info(f"Status streaming completed for request: {request_id}")
+        # Stream strictly via Redis pub/sub (async)
+        if AsyncRedis is None:
+            yield f"data: {json.dumps({'type': 'error', 'message': 'Redis client not available'})}\n\n"
+            logger.error("Redis client not available; cannot stream status updates")
+            return
+
+        try:
+            host = getattr(settings, 'REDIS_HOST', 'localhost')
+            port = getattr(settings, 'REDIS_PORT', 6379)
+            redis_client = AsyncRedis(host=host, port=port, db=3, decode_responses=True)
+            await redis_client.ping()
+
+            pubsub = redis_client.pubsub()
+            channel = f"video.{request_id}.progress"
+            await pubsub.subscribe(channel)
+
+            # Connected message and padding
+            yield f"data: {json.dumps({'type': 'connected', 'message': '\ud83d\ude80 Real-time progress tracking active', 'mode': 'redis_pubsub'})}\n\n"
+            yield f": padding to prevent buffering {' ' * 2048}\n\n"
+
+            start_ts = time.time()
+            max_duration = API_CONFIG['SSE'].get('event_timeout', 120)
+            keepalive_interval = API_CONFIG['SSE'].get('keepalive_interval', 30)
+            last_heartbeat_ts = time.time()
+            while True:
+                message = await pubsub.get_message(ignore_subscribe_messages=True, timeout=1.0)
+                if message is not None and message.get('type') == 'message':
+                    data = message.get('data')
+                    if data:
+                        yield f"data: {data}\n\n"
+                        last_heartbeat_ts = time.time()
+                        # Check terminal events
+                        try:
+                            parsed = json.loads(data)
+                            if parsed.get('type') in ['complete', 'error']:
+                                break
+                        except Exception:
+                            pass
+
+                # Periodic heartbeat to keep the stream flushing even when quiet
+                if time.time() - last_heartbeat_ts >= keepalive_interval:
+                    yield ": heartbeat\n\n"
+                    last_heartbeat_ts = time.time()
+
+                if time.time() - start_ts > max_duration:
+                    yield f"data: {json.dumps({'type': 'timeout', 'message': 'Stream timeout reached'})}\n\n"
                     break
-                    
-                time.sleep(poll_interval)  # Wait based on config
-                attempts += 1
-                
-            except URLRequestTable.DoesNotExist:
-                error_data = response_service.format_error_response(
-                    error_type="Request not found",
-                    message=f"No video processing request found with ID: {request_id}",
-                    status="not_found"
-                )
-                yield f"data: {json.dumps(error_data)}\\n\\n"
-                logger.warning(f"Status stream request not found: {request_id}")
-                break
-                
-            except Exception as e:
-                error_data = response_service.format_error_response(
-                    error_type="Streaming error",
-                    message=str(e),
-                    status="error"
-                )
-                yield f"data: {json.dumps(error_data)}\\n\\n"
-                logger.error(f"Status streaming error for {request_id}: {e}")
-                break
-        
-        # If we've exceeded max attempts, send timeout message
-        if attempts >= max_attempts:
-            timeout_data = response_service.format_error_response(
-                error_type="Streaming timeout",
-                message="Status streaming timed out. Processing may still be ongoing.",
-                status="timeout"
-            )
-            yield f"data: {json.dumps(timeout_data)}\\n\\n"
-            logger.warning(f"Status stream timeout for request: {request_id}")
+
+            try:
+                await pubsub.close()
+            except Exception:
+                pass
+            try:
+                await redis_client.aclose()
+            except Exception:
+                pass
+        except Exception as exc:
+            logger.error(f"Redis streaming error for {request_id}: {exc}")
+            yield f"data: {json.dumps({'type': 'error', 'message': str(exc)})}\n\n"
+            return
     
     # Create SSE response with proper headers
-    response = StreamingHttpResponse(event_stream(), content_type='text/event-stream')
-    response['Cache-Control'] = 'no-cache'
+    response = StreamingHttpResponse(event_stream(), content_type='text/event-stream; charset=utf-8')
+    response['Cache-Control'] = 'no-cache, no-transform'
     response['X-Accel-Buffering'] = 'no'  # Disable nginx buffering
-    response['Access-Control-Allow-Origin'] = '*'  # Allow CORS for SSE
-    response['Access-Control-Allow-Headers'] = 'Cache-Control'
+    response['Connection'] = 'keep-alive'
     
     return response
-
-
-def _build_status_data(url_request) -> Dict[str, Any]:
-    """
-    Build comprehensive status data for the streaming response.
-    
-    This function extracts and formats all relevant status information
-    from the URLRequestTable and related models.
-    
-    Args:
-        url_request: URLRequestTable instance with related data
-        
-    Returns:
-        Dictionary with comprehensive status information
-    """
-    # Initialize status data structure
-    data = {
-        'overall_status': url_request.status,
-        'timestamp': time.time(),
-        'metadata_status': None,
-        'transcript_status': None,
-        'summary_status': None,
-        'embedding_status': None,
-        'stages': {
-            'metadata_extracted': False,
-            'transcript_extracted': False,
-            'summary_generated': False,
-            'content_embedded': False,
-            'processing_complete': False
-        }
-    }
-    
-    # Add metadata details if exists
-    if hasattr(url_request, 'video_metadata'):
-        metadata = url_request.video_metadata
-        data['metadata_status'] = metadata.status
-        data['stages']['metadata_extracted'] = metadata.status == 'success'
-        
-        # Add embedding status
-        if hasattr(metadata, 'is_embedded'):
-            data['embedding_status'] = 'success' if metadata.is_embedded else 'pending'
-            data['stages']['content_embedded'] = metadata.is_embedded
-    
-    # Add transcript details if exists through VideoMetadata
-    if (hasattr(url_request, 'video_metadata') and 
-        hasattr(url_request.video_metadata, 'video_transcript')):
-        transcript = url_request.video_metadata.video_transcript
-        data['transcript_status'] = transcript.status
-        data['stages']['transcript_extracted'] = transcript.status == 'success'
-        
-        # Add summary status
-        if transcript.summary:
-            data['summary_status'] = 'success'
-            data['stages']['summary_generated'] = True
-        else:
-            data['summary_status'] = 'pending' if transcript.status == 'success' else 'waiting'
-    
-    # Overall completion status
-    data['stages']['processing_complete'] = url_request.status in ['success', 'failed']
-    
-    # Add progress percentage
-    completed_stages = sum(1 for stage in data['stages'].values() if stage)
-    total_stages = len(data['stages'])
-    data['progress_percentage'] = int((completed_stages / total_stages) * 100)
-    
-    # Add failure information if applicable
-    if url_request.status == 'failed' and url_request.failure_reason:
-        data['failure_reason'] = url_request.failure_reason
-    
-    # Add task tracking information
-    if url_request.celery_task_id:
-        data['celery_task_id'] = url_request.celery_task_id
-    if url_request.chain_task_id:
-        data['chain_task_id'] = url_request.chain_task_id
-    
-    return data

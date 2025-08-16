@@ -5,6 +5,7 @@ Contains clean, focused async views with proper error handling and validation.
 import json
 from typing import Dict, Any
 from django.http import JsonResponse, HttpRequest, HttpResponse
+from django.urls import reverse
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_http_methods
 from asgiref.sync import sync_to_async
@@ -70,12 +71,12 @@ async def process_single_video(request: HttpRequest) -> JsonResponse:
         from video_processor.processors.workflow import process_youtube_video
         await sync_to_async(process_youtube_video.delay)(url_request.id)
         
-        # Prepare validated response
+        # Prepare validated response with progress stream URL
+        stream_url = reverse('video_status_stream', kwargs={'request_id': url_request.request_id})
         response_data = VideoProcessResponse(
             request_id=str(url_request.request_id),
-            url=video_request.url,
+            stream_url=stream_url,
             status="processing",
-            message="Video processing started. Use the request_id to check status and retrieve results."
         )
         
         logger.info(f"Video processing initiated for URL: {str(video_request.url)[:50]}...")

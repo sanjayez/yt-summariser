@@ -210,17 +210,15 @@ class TimingInfo(BaseModel):
 class VideoProcessResponse(BaseModel):
     """Response schema for video processing initiation"""
     request_id: str = Field(..., description="Unique request identifier")
-    url: HttpUrl = Field(..., description="Processed video URL")
+    stream_url: str = Field(..., description="Relative SSE path for this request (e.g., /api/video/status/<request_id>/)")
     status: VideoProcessingStatus = Field(..., description="Current processing status")
-    message: str = Field(..., description="Status message")
     
     class Config:
         json_schema_extra = {
             "example": {
                 "request_id": "123e4567-e89b-12d3-a456-426614174000",
-                "url": "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
-                "status": "processing",
-                "message": "Video processing started. Use the request_id to check status and retrieve results."
+                "stream_url": "http://localhost:8000/api/video/status/123e4567-e89b-12d3-a456-426614174000/",
+                "status": "processing"
             }
         }
 

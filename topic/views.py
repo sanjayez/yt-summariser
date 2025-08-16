@@ -398,8 +398,6 @@ async def simple_sse_test(request):
     response['X-Accel-Buffering'] = 'no'  # Disable nginx buffering
     response['Access-Control-Allow-Origin'] = '*'
     response['Access-Control-Allow-Headers'] = 'Cache-Control'
-    response['Connection'] = 'keep-alive'
-    response['Transfer-Encoding'] = 'chunked'  # Force chunked encoding
     return response
 
 
@@ -649,7 +647,6 @@ class IntegratedSearchProcessAPIView(APIView):
             # Simple validation for basic usage
             query = request.data.get('query', '').strip()
             max_videos = request.data.get('max_videos', 5)
-            timeout = request.data.get('timeout', 3600)  # 1 hour default
             
             if not query:
                 return Response(
@@ -694,12 +691,7 @@ class IntegratedSearchProcessAPIView(APIView):
                 'search_id': str(search_request.search_id),
                 'session_id': str(session.session_id),
                 'query': query,
-                'max_videos': max_videos,
-                'process_videos': True,
                 'status': 'processing',
-                'task_id': task.id,
-                'estimated_completion_time': timeout,
-                'status_stream_url': f'/api/topic/search/status/{search_request.search_id}/stream/'
             }
             
             # Return response directly for now (skip serializer for simplicity)
