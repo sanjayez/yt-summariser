@@ -140,6 +140,9 @@ def update_task_progress(task_instance, step, progress_percent, meta=None):
         logger.debug(f"Skipping progress update for {step} - no valid task ID")
         return
     
+    # Progress tracking entry point
+    logger.debug(f"update_task_progress called for step '{step}' with progress {progress_percent}%")
+    
     meta_data = {
         'step': step,
         'progress': progress_percent,
@@ -164,14 +167,20 @@ def update_task_progress(task_instance, step, progress_percent, meta=None):
         # Feature flag (default True for MVP); allow turning off via settings
         publish_enabled = getattr(settings, 'VIDEO_SSE_PUBLISH', True)
         if not publish_enabled:
+            logger.debug(f"Video SSE publishing disabled via settings")
             return
 
         request_uuid = _resolve_request_uuid(task_instance)
         if not request_uuid:
+            task_id = getattr(task_instance.request, 'id', 'unknown')
+            args = getattr(task_instance.request, 'args', [])
+            kwargs = getattr(task_instance.request, 'kwargs', {})
+            logger.debug(f"Could not resolve request UUID for task {task_id} - skipping Redis publish")
             return
 
         message_type, payload = _build_video_progress_payload(step, progress_percent, meta or {})
         if not message_type:
+            logger.debug(f"No message type for step '{step}' - skipping Redis publish")
             return
 
         channel = f"video.{request_uuid}.progress"
@@ -181,29 +190,55 @@ def update_task_progress(task_instance, step, progress_percent, meta=None):
             'timestamp': _time.time(),
             **payload
         })
+        logger.error(f"🔴 REDIS PUBLISH: {message_type} event for video {request_uuid[:8]} to channel {channel} - payload: {payload}")
     except Exception as pub_error:
         # Never fail the task due to progress pub issues
-        logger.debug(f"Non-fatal: failed to publish video progress update: {pub_error}")
+        logger.warning(f"Non-fatal: failed to publish video progress update: {pub_error}")
 
 
 def _resolve_request_uuid(task_instance) -> Optional[str]:
     """Try to resolve URLRequestTable.request_id (UUID string) from Celery task args/kwargs."""
+    import uuid
+    
     try:
         url_request_id = None
+        task_id = getattr(task_instance.request, 'id', 'unknown')
+        
         # Prefer kwargs
         if hasattr(task_instance.request, 'kwargs') and task_instance.request.kwargs:
             url_request_id = task_instance.request.kwargs.get('url_request_id')
-        # Fallback: scan args (often last positional arg)
-        if url_request_id is None and hasattr(task_instance.request, 'args'):
-            for arg in reversed(task_instance.request.args or []):
-                if isinstance(arg, (int, str)):  # Accept UUID string or other formats
-                    url_request_id = arg
-                    break
-        if url_request_id is None:
-            return None
-        # Convert to string if needed (request_id is now always UUID)
-        return str(url_request_id)
-    except Exception:
+            if url_request_id:
+                logger.error(f"🔴 UUID DEBUG: Found in kwargs: {url_request_id}")
+                return str(url_request_id)
+        
+        # Fallback: scan args for UUID objects or UUID-like strings
+        if hasattr(task_instance.request, 'args') and task_instance.request.args:
+            args = task_instance.request.args
+            
+            # Handle the specific pattern we see: [[...data...], UUID('xxx')]
+            for i, arg in enumerate(args):
+                # Direct UUID object check
+                if isinstance(arg, uuid.UUID):
+                    url_request_id = str(arg)
+                    return url_request_id
+                
+                # UUID format string check
+                arg_str = str(arg)
+                if len(arg_str) == 36 and arg_str.count('-') == 4:
+                    url_request_id = arg_str
+                    return url_request_id
+            
+            # Also check in reverse order (last argument priority)
+            for i, arg in enumerate(reversed(args)):
+                if isinstance(arg, uuid.UUID):
+                    url_request_id = str(arg)
+                    return url_request_id
+        
+        logger.debug(f"No UUID found in task {task_id} - args: {getattr(task_instance.request, 'args', [])}")
+        return None
+        
+    except Exception as e:
+        logger.debug(f"Exception in _resolve_request_uuid: {e}")
         return None
 
 

@@ -14,6 +14,7 @@ from celery.exceptions import Retry, SoftTimeLimitExceeded
 
 from .models import SearchRequest as SearchRequestModel
 from .utils.explorer_progress import ExplorerProgressTracker
+from .utils.search_progress_aggregator import SearchProgressAggregator
 from .utils.session_utils import update_session_status
 from video_processor.models import URLRequestTable
 from video_processor.processors.workflow import process_youtube_video
@@ -21,6 +22,77 @@ from video_processor.config import YOUTUBE_CONFIG, BUSINESS_LOGIC_CONFIG
 from video_processor.utils import handle_dead_letter_task
 
 logger = logging.getLogger(__name__)
+
+
+@shared_task(bind=True,
+             name='topic.monitor_search_progress',
+             soft_time_limit=YOUTUBE_CONFIG['TASK_TIMEOUTS']['parallel_soft_limit'],
+             time_limit=YOUTUBE_CONFIG['TASK_TIMEOUTS']['parallel_hard_limit'],
+             autoretry_for=(Exception,),
+             retry_backoff=YOUTUBE_CONFIG['RETRY_CONFIG']['parallel']['backoff'],
+             retry_jitter=YOUTUBE_CONFIG['RETRY_CONFIG']['parallel']['jitter'])
+def monitor_search_progress(self, search_id: str, url_request_ids: list):
+    """
+    Dedicated task for monitoring video processing progress and emitting stage transitions.
+    
+    This task runs independently from video processing to avoid blocking workers.
+    Subscribes to Redis events from individual video processing and triggers stage 
+    transitions based on completion thresholds.
+    
+    Args:
+        search_id: UUID of the search request
+        url_request_ids: List of URLRequestTable UUIDs to monitor
+        
+    Returns:
+        dict: Monitoring completion result
+        
+    Raises:
+        Exception: If monitoring setup or execution fails
+    """
+    logger.info(f"Starting dedicated progress monitoring task for search {search_id} with {len(url_request_ids)} videos")
+    logger.error(f"🔴 MONITOR DEBUG: url_request_ids = {url_request_ids[:3]}...")  # Show first 3
+    
+    try:
+        # Initialize progress tracker for this monitoring task
+        progress = ExplorerProgressTracker(search_id)
+        
+        # Initialize progress aggregator 
+        aggregator = SearchProgressAggregator(search_id, url_request_ids, progress)
+        
+        logger.info(f"Progress monitoring task initialized - beginning event-driven stage tracking")
+        
+        # This blocks safely in dedicated task - no worker interference
+        aggregator.monitor_video_stages()
+        
+        logger.info(f"Progress monitoring completed successfully for search {search_id}")
+        
+        return {
+            'status': 'completed',
+            'search_id': search_id,
+            'monitored_videos': len(url_request_ids),
+            'message': 'Event-driven progress monitoring completed successfully'
+        }
+        
+    except Exception as e:
+        error_msg = f"Progress monitoring task failed for search {search_id}: {str(e)}"
+        logger.error(error_msg)
+        
+        # Try to emit final completion to prevent hanging frontend
+        try:
+            progress = ExplorerProgressTracker(search_id)
+            progress.send_error(f"Progress tracking failed: {str(e)}")
+            progress.expedition_complete()
+            logger.info(f"Sent fallback completion for search {search_id}")
+        except Exception as fallback_error:
+            logger.error(f"Fallback completion failed: {fallback_error}")
+        
+        # Don't raise - let the task complete to avoid retries
+        return {
+            'status': 'failed',
+            'search_id': search_id,
+            'error': 'Progress monitoring failed',
+            'details': str(e)
+        }
 
 
 @shared_task(bind=True, 
@@ -97,14 +169,8 @@ def process_search_results(self, search_id: str):
         # 🔍 EXCAVATING STAGE: Processing Video Content
         progress.start_stage('EXCAVATING')
         
-        # Strategic delay for stage start
-        import time
-        time.sleep(1)
-        
         # Create URLRequestTable entries for each video
         try:
-            # Strategic delay for preparation
-            time.sleep(1.5)
             
             url_request_ids = _create_url_request_entries(search_request, video_urls)
             logger.info(f"Created {len(url_request_ids)} URLRequestTable entries for search request {search_id}")
@@ -121,11 +187,8 @@ def process_search_results(self, search_id: str):
                 'search_id': search_id
             }
         
-        # Parallel video processing with progress tracking
+        # Launch parallel video processing
         try:
-            # Strategic delay before starting parallel processing
-            time.sleep(1)
-            
             # Create Celery group for parallel processing
             job_group = group(
                 process_youtube_video.s(url_request_id) 
@@ -138,110 +201,65 @@ def process_search_results(self, search_id: str):
             
             logger.info(f"Initiated parallel processing with {len(task_ids)} tasks for search {search_id}")
             
-            # Monitor progress of parallel tasks
-            processed_count = 0
-            total_videos = len(url_request_ids)
-            
-            # Poll for completion with progress updates
-            while not group_result.ready():
-                # Check individual task progress
-                completed_tasks = sum(1 for task in group_result.children if task.ready())
-                if completed_tasks > processed_count:
-                    processed_count = completed_tasks
-                    stage_progress = 20 + (processed_count * 60 // total_videos)  # 20-80% range
-                    
-
-                    
-                    logger.info(f"Video processing progress: {processed_count}/{total_videos} completed")
-                
-                # Short sleep to avoid busy waiting
-                import time
-                time.sleep(2)
-            
-
-            
-            # Count results without calling .get() (which is forbidden in Celery tasks)
-            # Instead, check the database status of URL requests
-            from video_processor.models import URLRequestTable
-            
-            completed_count = 0
-            successful_count = 0
-            failed_count = 0
-            
-            for url_request_id in url_request_ids:
-                try:
-                    url_request = URLRequestTable.objects.get(request_id=url_request_id)
-                    if url_request.status in ['success', 'failed']:
-                        completed_count += 1
-                        if url_request.status == 'success':
-                            successful_count += 1
-                        else:
-                            failed_count += 1
-                except URLRequestTable.DoesNotExist:
-                    logger.warning(f"URL request {url_request_id} not found when checking status")
-                    failed_count += 1
-            
-            logger.info(f"Parallel processing completed: {successful_count} successful, {failed_count} failed, {completed_count} total")
-            
         except Exception as e:
-            error_msg = f"Parallel video processing failed: {str(e)}"
+            error_msg = f"Failed to launch video processing: {str(e)}"
             logger.error(error_msg)
-            progress.send_error(f"Video processing failed: {str(e)}")
+            progress.send_error(f"Video processing failed to start: {str(e)}")
             _update_search_request_processing_status(search_request, 'failed', error_msg)
             return {
                 'status': 'failed',
-                'error': 'Parallel video processing failed',
+                'error': 'Failed to launch video processing',
                 'details': str(e),
                 'search_id': search_id
             }
         
-        # Strategic delay for stage transition
-        time.sleep(1)
-        
-        # 🔬 ANALYZING STAGE: Embedding and Deep Analysis
-        progress.start_stage('ANALYZING')
-        
-        # Strategic delay for embedding and analysis processing
-        time.sleep(2)
-        
-        # 💎 TREASURE_READY STAGE: Final Completion
-        progress.start_stage('TREASURE_READY')
-        
-        # Strategic delay for final processing
-        time.sleep(1.5)
-        
-        # Update final status
+        # 🎯 EVENT-DRIVEN STAGE MONITORING: Launch as separate task to avoid blocking
         try:
-            _update_search_request_processing_status(search_request, 'completed', 
-                                                   f"Processed {successful_count} videos successfully")
-            update_session_status(session, 'success')
+            logger.info(f"Launching dedicated progress monitoring task for {len(url_request_ids)} videos")
             
-            # Strategic delay before final completion
+            # Small delay to ensure video tasks start before monitoring begins
+            import time
             time.sleep(0.5)
             
-            progress.expedition_complete()
+            # Launch monitoring as separate Celery task (non-blocking)
+            monitoring_task = monitor_search_progress.delay(search_id, url_request_ids)
             
-            logger.info(f"Search results processing completed for {search_id}")
+            logger.info(f"Progress monitoring task launched: {monitoring_task.id}")
+            logger.info(f"Video processing orchestration completed for search {search_id}")
             
-            return {
-                'status': 'success',
-                'search_id': search_id,
-                'processed_videos': successful_count,
-                'failed_videos': failed_count,
-                'total_videos': total_videos,
-                'task_ids': task_ids
-            }
+            # Note: We don't wait for monitoring task completion here
+            # The monitoring task will handle all stage transitions independently
             
         except Exception as e:
-            error_msg = f"Failed to update final status: {str(e)}"
+            error_msg = f"Failed to launch progress monitoring task: {str(e)}"
             logger.error(error_msg)
-            progress.send_error(f"Failed to finalize results: {str(e)}")
+            
+            # If monitoring task launch fails, send fallback completion
+            try:
+                progress.send_error(f"Progress monitoring failed to start: {str(e)}")
+                progress.expedition_complete()
+                logger.info(f"Sent fallback completion due to monitoring launch failure")
+            except Exception as fallback_error:
+                logger.error(f"Fallback completion failed: {fallback_error}")
+            
             return {
-                'status': 'failed',
-                'error': 'Failed to update final status',
+                'status': 'completed_with_monitoring_issues',
+                'error': 'Progress monitoring launch failed',
                 'details': str(e),
-                'search_id': search_id
+                'search_id': search_id,
+                'monitoring_task_id': None
             }
+        
+        # Success case - normal completion
+        return {
+            'status': 'success',
+            'search_id': search_id,
+            'video_processing_launched': True,
+            'monitoring_task_launched': True,
+            'monitoring_task_id': monitoring_task.id,
+            'total_videos': len(url_request_ids),
+            'message': 'Video processing and progress monitoring launched successfully'
+        }
         
     except SoftTimeLimitExceeded:
         # Combined processing is approaching timeout

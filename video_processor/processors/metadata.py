@@ -153,11 +153,15 @@ def extract_video_metadata(self, url_request_id):
         Exception: If metadata extraction fails after retries
     """
     try:
+        
         # Get the URL request
         url_request = URLRequestTable.objects.get(request_id=url_request_id)
         
         logger.info(f"Starting metadata extraction for request {url_request_id}")
         logger.info(f"Extracting metadata for {url_request.url}")
+        
+        # Redis progress tracking for SearchProgressAggregator
+        update_task_progress(self, 'extracting_metadata', 10)
         
         # Extract metadata using yt-dlp
         ydl_opts = {
@@ -213,6 +217,9 @@ def extract_video_metadata(self, url_request_id):
             # Video metadata extraction completed successfully
         
         logger.info(f"Metadata extraction completed successfully for video {metadata['video_id']}")
+        
+        # Redis progress tracking - metadata complete
+        update_task_progress(self, 'extracting_metadata', 100)
         
         # Return the expected format for workflow chain
         return {

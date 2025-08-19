@@ -202,6 +202,9 @@ def extract_video_transcript(self, metadata_result, url_request_id):
         
         logger.info(f"Starting transcript extraction for video {video_id} using Decodo API")
         
+        # Redis progress tracking for SearchProgressAggregator
+        update_task_progress(self, 'extracting_transcript', 10)
+        
         progress_recorder.set_progress(10, 100, description="Initializing transcript extraction")
         
         # Create or get transcript record
@@ -220,6 +223,9 @@ def extract_video_transcript(self, metadata_result, url_request_id):
                 transcript_obj.save()
         
         progress_recorder.set_progress(20, 100, description="Extracting transcript from Decodo API")
+        
+        # Redis progress tracking
+        update_task_progress(self, 'extracting_transcript', 30)
         
         # Extract transcript (removed timeout wrapper since it's not functional)
         # Get the video's detected language (using normalized metadata - no fallback needed)
@@ -311,6 +317,9 @@ def extract_video_transcript(self, metadata_result, url_request_id):
                 segments_created.append(segment_id)
         
         progress_recorder.set_progress(100, 100, description="Transcript extraction complete")
+        
+        # Redis progress tracking - transcript complete
+        update_task_progress(self, 'extracting_transcript', 100)
         
         logger.info(f"Successfully extracted transcript with {len(transcript_data)} segments using {extraction_source}")
         logger.info(f"Created {len(segments_created)} transcript segments")
