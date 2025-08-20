@@ -14,6 +14,92 @@ from ..utils import (
 
 logger = logging.getLogger(__name__)
 
+
+def _gather_complete_video_data(url_request_id: str) -> dict:
+    """
+    Gather complete video data for SSE completion event.
+    
+    Args:
+        url_request_id: UUID of the URLRequestTable
+        
+    Returns:
+        dict: Complete video data with metadata, transcript, and content analysis
+    """
+    try:
+        # Use select_related to minimize database queries
+        url_request = URLRequestTable.objects.select_related(
+            'video_metadata',
+            'video_metadata__video_transcript',
+            'video_metadata__video_transcript__content_analysis'
+        ).get(request_id=url_request_id)
+        
+        video_data = {}
+        
+        # Gather complete metadata
+        if hasattr(url_request, 'video_metadata') and url_request.video_metadata:
+            video_metadata = url_request.video_metadata
+            video_data['metadata'] = {
+                'video_id': video_metadata.video_id,
+                'title': video_metadata.title,
+                'description': video_metadata.description,
+                'duration': video_metadata.duration,
+                'channel_name': video_metadata.channel_name,
+                'channel_id': video_metadata.channel_id,
+                'channel_thumbnail': video_metadata.channel_thumbnail,
+                'view_count': video_metadata.view_count,
+                'like_count': video_metadata.like_count,
+                'comment_count': video_metadata.comment_count,
+                'upload_date': str(video_metadata.upload_date) if video_metadata.upload_date else None,
+                'language': video_metadata.language,
+                'thumbnail': video_metadata.thumbnail,
+                'tags': video_metadata.tags,
+                'categories': video_metadata.categories,
+                'channel_follower_count': video_metadata.channel_follower_count,
+                'channel_is_verified': video_metadata.channel_is_verified,
+                'uploader_id': video_metadata.uploader_id,
+                'engagement': video_metadata.engagement,  # This is a list of high engagement segments
+                'is_embedded': video_metadata.is_embedded,
+                'status': video_metadata.status
+            }
+            
+            # Gather complete transcript data
+            if hasattr(video_metadata, 'video_transcript') and video_metadata.video_transcript:
+                transcript = video_metadata.video_transcript
+                video_data['transcript'] = {
+                    'transcript_text': transcript.transcript_text,
+                    'summary': transcript.summary,
+                    'key_points': transcript.key_points,
+                    'chapters': transcript.chapters,
+                    'transcript_source': transcript.transcript_source,
+                    'status': transcript.status
+                }
+                
+                # Gather complete content analysis
+                if hasattr(transcript, 'content_analysis') and transcript.content_analysis:
+                    analysis = transcript.content_analysis
+                    video_data['content_analysis'] = {
+                        'preliminary_analysis_status': analysis.preliminary_analysis_status,
+                        'timestamped_analysis_status': analysis.timestamped_analysis_status,
+                        'speaker_tones': analysis.speaker_tones,
+                        'raw_ad_segments': analysis.raw_ad_segments,
+                        'raw_filler_segments': analysis.raw_filler_segments,
+                        'ad_segments': analysis.ad_segments,
+                        'filler_segments': analysis.filler_segments,
+                        'ad_duration_ratio': float(analysis.ad_duration_ratio) if analysis.ad_duration_ratio is not None else None,
+                        'filler_duration_ratio': float(analysis.filler_duration_ratio) if analysis.filler_duration_ratio is not None else None,
+                        'content_rating': float(analysis.content_rating) if analysis.content_rating is not None else None,
+                        'is_preliminary_complete': analysis.is_preliminary_complete,
+                        'is_final_complete': analysis.is_final_complete,
+                        'is_complete': analysis.is_complete
+                    }
+        
+        return video_data
+        
+    except Exception as e:
+        logger.error(f"Error gathering complete video data for {url_request_id}: {e}", exc_info=True)
+        return {}
+
+
 # Task 3: Update Overall Status
 @shared_task(bind=True,
              name='video_processor.update_overall_status',
@@ -119,10 +205,27 @@ def update_overall_status(self, embedding_result, url_request_id):
         # Refresh to get updated status
         url_request.refresh_from_db()
         
+        # Check if this video is part of a topic search
+        is_part_of_search = False
+        try:
+            is_part_of_search = url_request.search_request is not None
+        except AttributeError:
+            # search_request field might not exist in older installations
+            pass
+        
+        # Only gather complete video data for standalone video processing
+        video_data = None
+        if not is_part_of_search:
+            logger.info(f"Gathering complete video data for standalone video {url_request_id}")
+            video_data = _gather_complete_video_data(url_request_id)
+        else:
+            logger.info(f"Skipping video data gathering for search-related video {url_request_id}")
+        
         update_task_progress(self, TASK_STATES['COMPLETED'], 100, {
             'final_status': url_request.status,
             'has_metadata': hasattr(url_request, 'video_metadata'),
             'has_transcript': hasattr(url_request, 'video_metadata') and hasattr(url_request.video_metadata, 'video_transcript'),
+            'video_data': video_data  # Will be None for topic search videos
         })
         
         logger.info(f"Final status for request {url_request_id}: {url_request.status}")

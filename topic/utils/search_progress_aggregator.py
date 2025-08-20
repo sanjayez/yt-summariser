@@ -13,6 +13,7 @@ import redis
 from django.conf import settings
 
 from .explorer_progress import ExplorerProgressTracker
+from video_processor.processors.status import _gather_complete_video_data
 
 logger = logging.getLogger(__name__)
 
@@ -128,7 +129,7 @@ class SearchProgressAggregator:
                 completion_pct = (len(self.stage_completions['COMPLETE']) / self.total_videos) * 100
                 if completion_pct >= COMPLETION_THRESHOLD:
                     logger.info(f"Search {self.search_id} complete: {len(self.stage_completions['COMPLETE'])}/{self.total_videos} videos finished")
-                    self.progress.expedition_complete()
+                    self._emit_complete_with_video_data()
                     break
                 
                 # Small delay to prevent busy waiting
@@ -195,7 +196,7 @@ class SearchProgressAggregator:
                 # If all videos are already processed, complete immediately
                 if already_processed_count == self.total_videos:
                     logger.info(f"All {self.total_videos} videos already processed - completing search immediately")
-                    self.progress.expedition_complete()
+                    self._emit_complete_with_video_data()
                     return True
             else:
                 logger.info(f"No already-processed videos found - waiting for Redis events")
@@ -338,8 +339,105 @@ class SearchProgressAggregator:
                     self.progress.start_stage(stage_name)
                     self.triggered_stages.add(stage_name)
         
-        # Force expedition complete
-        self.progress.expedition_complete()
+        # Force expedition complete with available data
+        self._emit_complete_with_video_data()
+    
+    def _emit_complete_with_video_data(self) -> None:
+        """
+        Emit a single complete event with all video data included.
+        
+        This method:
+        1. Gathers all video data
+        2. Emits ONE complete event containing both the success message and video data
+        """
+        try:
+            # Gather all video data
+            logger.info(f"Gathering video data for completed search {self.search_id}")
+            search_data = self._gather_all_search_videos_data()
+            
+            # Build single complete event with all data
+            complete_payload = {
+                'type': 'complete',
+                'search_id': self.search_id,
+                'timestamp': time.time(),
+                'message': '🎉 Knowledge expedition completed successfully!',
+                'search_data': search_data
+            }
+            
+            # Publish single complete event to Redis
+            channel = f'search.{self.search_id}.progress'
+            self.redis_client.publish(channel, json.dumps(complete_payload))
+            
+            logger.info(f"Published single complete event with {len(search_data.get('videos', []))} videos data for search {self.search_id}")
+            
+        except Exception as e:
+            logger.error(f"Error emitting complete event with video data: {e}", exc_info=True)
+            # Fallback: emit basic completion without video data if gathering fails
+            try:
+                fallback_payload = {
+                    'type': 'complete',
+                    'search_id': self.search_id,
+                    'timestamp': time.time(),
+                    'message': '🎉 Knowledge expedition completed successfully!'
+                }
+                channel = f'search.{self.search_id}.progress'
+                self.redis_client.publish(channel, json.dumps(fallback_payload))
+                logger.warning(f"Published fallback complete event without video data for search {self.search_id}")
+            except Exception as fallback_error:
+                logger.error(f"Failed to publish fallback complete event: {fallback_error}")
+    
+    def _gather_all_search_videos_data(self) -> Dict[str, List[Dict]]:
+        """
+        Gather complete data for all videos in a search.
+        Reuses the single video data gathering function.
+        
+        Returns:
+            Dictionary containing list of all video data
+        """
+        videos_data = []
+        
+        try:
+            from api.models import URLRequestTable
+            
+            # Get all video request IDs for this search
+            # Use the already known url_request_ids to avoid extra queries
+            for request_id in self.url_request_ids:
+                try:
+                    # Check if video was successful before gathering data
+                    url_request = URLRequestTable.objects.filter(
+                        request_id=request_id,
+                        status='success'
+                    ).first()
+                    
+                    if not url_request:
+                        # Skip non-successful videos (failed, excluded, processing, etc.)
+                        logger.info(f"Skipping non-successful video {request_id[:8]} in search {self.search_id}")
+                        continue
+                    
+                    # Reuse existing function for each successful video
+                    video_data = _gather_complete_video_data(request_id)
+                    
+                    if video_data:  # Only include videos with data
+                        videos_data.append({
+                            'request_id': request_id,
+                            **video_data
+                        })
+                    else:
+                        logger.warning(f"No data found for video {request_id[:8]} in search {self.search_id}")
+                        
+                except Exception as e:
+                    logger.error(f"Error gathering data for video {request_id[:8]}: {e}")
+                    # Continue with other videos even if one fails
+                    continue
+            
+            logger.info(f"Gathered data for {len(videos_data)} successful videos out of {self.total_videos} total videos for search {self.search_id}")
+            
+        except Exception as e:
+            logger.error(f"Error gathering search videos data: {e}", exc_info=True)
+            # Return empty list on error to avoid breaking the flow
+            return {'videos': []}
+        
+        return {'videos': videos_data}
     
     def get_completion_stats(self) -> Dict[str, any]:
         """

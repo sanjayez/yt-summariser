@@ -246,9 +246,16 @@ def _build_video_progress_payload(step: str, progress: int | float, meta: dict) 
     """Map internal step/progress to topic-like SSE payload."""
     step_l = (step or '').lower()
 
-    # Terminal completion
+    # Terminal completion with optional video data
     if 'completed' in step_l or step_l == 'completed':
-        return 'complete', {'message': 'Processing completed'}
+        payload = {'message': 'Processing completed'}
+        
+        # Include complete video data if available (only for standalone video processing)
+        # Topic search videos will have video_data=None to avoid unnecessary data transfer
+        if 'video_data' in meta and meta['video_data']:
+            payload['video_data'] = meta['video_data']
+        
+        return 'complete', payload
 
     # Determine stage name
     stage = None
