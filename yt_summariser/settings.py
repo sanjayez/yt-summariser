@@ -152,10 +152,20 @@ STATIC_URL = 'static/'
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
+# Redis Configuration
+REDIS_URL = os.getenv('REDIS_URL', 'redis://localhost:6379')
+
+# Parse Redis URL to extract host and port for configurations that need them separately
+from urllib.parse import urlparse
+redis_parsed = urlparse(REDIS_URL)
+REDIS_HOST = redis_parsed.hostname or 'localhost'
+REDIS_PORT = redis_parsed.port or 6379
+REDIS_PASSWORD = redis_parsed.password
+
 # Celery Configuration
-CELERY_BROKER_URL = 'redis://localhost:6379/0'
-CELERY_RESULT_BACKEND = 'redis://localhost:6379/1'  # Use Redis for results to fix backend conflicts
-CELERY_CACHE_BACKEND = 'redis://localhost:6379/2'   # Use Redis for cache consistency
+CELERY_BROKER_URL = f"{REDIS_URL}/0"
+CELERY_RESULT_BACKEND = f"{REDIS_URL}/1"  # Use Redis for results to fix backend conflicts
+CELERY_CACHE_BACKEND = f"{REDIS_URL}/2"   # Use Redis for cache consistency
 CELERY_ACCEPT_CONTENT = ['json']
 CELERY_TASK_SERIALIZER = 'json'
 CELERY_RESULT_SERIALIZER = 'json'
@@ -221,7 +231,7 @@ CHANNEL_LAYERS = {
     'default': {
         'BACKEND': 'channels_redis.core.RedisChannelLayer',
         'CONFIG': {
-            "hosts": [('127.0.0.1', 6379)],
+            "hosts": [(REDIS_HOST, REDIS_PORT)] if not REDIS_PASSWORD else [f"redis://:{REDIS_PASSWORD}@{REDIS_HOST}:{REDIS_PORT}"],
         },
     },
 }

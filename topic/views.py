@@ -6,6 +6,7 @@ from rest_framework.exceptions import ValidationError, APIException
 from django.db import transaction
 from django.db.models import Q, Count, Case, When
 from django.http import StreamingHttpResponse
+from django.conf import settings
 import logging
 import json
 import time
@@ -413,7 +414,20 @@ async def search_status_stream(request, search_id):
         
         # Try Redis pub/sub for real-time updates first
         try:
-            redis_client = redis.Redis(host='localhost', port=6379, db=3, decode_responses=True)
+            # Get Redis configuration from settings
+            redis_config = {
+                'host': getattr(settings, 'REDIS_HOST', 'localhost'),
+                'port': getattr(settings, 'REDIS_PORT', 6379),
+                'db': 3,
+                'decode_responses': True
+            }
+            
+            # Add password if available
+            redis_password = getattr(settings, 'REDIS_PASSWORD', None)
+            if redis_password:
+                redis_config['password'] = redis_password
+                
+            redis_client = redis.Redis(**redis_config)
             redis_client.ping()  # Test connection
             
             pubsub = redis_client.pubsub()

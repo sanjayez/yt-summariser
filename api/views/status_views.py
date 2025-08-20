@@ -75,7 +75,19 @@ async def video_status_stream(request: HttpRequest, request_id: UUID) -> Streami
         try:
             host = getattr(settings, 'REDIS_HOST', 'localhost')
             port = getattr(settings, 'REDIS_PORT', 6379)
-            redis_client = AsyncRedis(host=host, port=port, db=3, decode_responses=True)
+            password = getattr(settings, 'REDIS_PASSWORD', None)
+            
+            redis_config = {
+                'host': host,
+                'port': port,
+                'db': 3,
+                'decode_responses': True
+            }
+            
+            if password:
+                redis_config['password'] = password
+                
+            redis_client = AsyncRedis(**redis_config)
             await redis_client.ping()
 
             pubsub = redis_client.pubsub()

@@ -84,6 +84,11 @@ class SearchProgressAggregator:
             'decode_responses': True
         }
         
+        # Add password if available
+        redis_password = getattr(settings, 'REDIS_PASSWORD', None)
+        if redis_password:
+            redis_config['password'] = redis_password
+        
         try:
             self.redis_client = redis.Redis(**redis_config)
             self.redis_client.ping()  # Test connection
@@ -310,6 +315,77 @@ class SearchProgressAggregator:
                 # Emit stage transition
                 self.progress.start_stage(stage_name)
                 self.triggered_stages.add(stage_name)
+                
+                # Publish summaries data when TREASURE_READY is reached
+                if stage_name == 'TREASURE_READY':
+                    self._publish_treasure_ready_summaries()
+    
+    def _publish_treasure_ready_summaries(self) -> None:
+        """
+        Publish summaries data when TREASURE_READY stage is reached.
+        
+        Sends a separate SSE event with summaries from all videos that have
+        completed the SUMMARY stage, allowing the frontend to display them
+        immediately without waiting for full completion.
+        """
+        try:
+            from api.models import URLRequestTable
+            
+            summaries = []
+            
+            # Get summaries from videos that have completed SUMMARY stage
+            for request_id in self.stage_completions['SUMMARY']:
+                try:
+                    # Only get successful videos with summaries
+                    url_request = URLRequestTable.objects.filter(
+                        request_id=request_id,
+                        status='success'
+                    ).select_related(
+                        'video_metadata__video_transcript'
+                    ).first()
+                    
+                    if not url_request:
+                        continue
+                    
+                    # Extract summary data if available
+                    if hasattr(url_request, 'video_metadata') and url_request.video_metadata:
+                        video_metadata = url_request.video_metadata
+                        
+                        if hasattr(video_metadata, 'video_transcript') and video_metadata.video_transcript:
+                            transcript = video_metadata.video_transcript
+                            
+                            # Only include if summary exists
+                            if transcript.summary:
+                                summaries.append({
+                                    'video_id': video_metadata.video_id,
+                                    'title': video_metadata.title,
+                                    'summary': transcript.summary,
+                                    'key_points': transcript.key_points or []
+                                })
+                            
+                except Exception as e:
+                    logger.error(f"Error gathering summary for video {request_id[:8]}: {e}")
+                    continue
+            
+            # Publish summaries as a separate event
+            if summaries:
+                payload = {
+                    'type': 'treasure_summaries',
+                    'search_id': self.search_id,
+                    'timestamp': time.time(),
+                    'summaries': summaries,
+                    'message': f'📚 {len(summaries)} video summaries ready for exploration!'
+                }
+                
+                channel = f'search.{self.search_id}.progress'
+                self.redis_client.publish(channel, json.dumps(payload))
+                
+                logger.info(f"Published treasure summaries for {len(summaries)} videos in search {self.search_id}")
+            else:
+                logger.warning(f"No summaries available yet for TREASURE_READY stage in search {self.search_id}")
+                
+        except Exception as e:
+            logger.error(f"Error publishing treasure summaries for search {self.search_id}: {e}", exc_info=True)
     
     def _force_completion_with_available_data(self) -> None:
         """

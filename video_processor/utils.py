@@ -302,6 +302,18 @@ def _publish_to_redis(channel: str, payload: dict) -> None:
     """Publish JSON payload to Redis pub/sub on DB 3 (like topic explorer)."""
     host = getattr(settings, 'REDIS_HOST', 'localhost')
     port = getattr(settings, 'REDIS_PORT', 6379)
-    client = redis.Redis(host=host, port=port, db=3, decode_responses=True)
+    password = getattr(settings, 'REDIS_PASSWORD', None)
+    
+    redis_config = {
+        'host': host,
+        'port': port,
+        'db': 3,
+        'decode_responses': True
+    }
+    
+    if password:
+        redis_config['password'] = password
+        
+    client = redis.Redis(**redis_config)
     # Will raise on connection issues; caller wraps
     client.publish(channel, json.dumps(payload))

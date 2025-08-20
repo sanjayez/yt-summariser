@@ -69,6 +69,11 @@ class ExplorerProgressTracker:
             'decode_responses': True
         }
         
+        # Add password if available
+        redis_password = getattr(settings, 'REDIS_PASSWORD', None)
+        if redis_password:
+            redis_config['password'] = redis_password
+        
         try:
             self.redis_client = redis.Redis(**redis_config)
             # Test connection
