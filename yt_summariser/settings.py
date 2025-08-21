@@ -39,6 +39,11 @@ DEBUG = os.getenv('DEBUG', 'False').lower() == 'true'
 # Get allowed hosts from environment variable, fallback to specific hosts
 ALLOWED_HOSTS = os.getenv('ALLOWED_HOSTS', 'localhost,127.0.0.1,yt-summariser-a7fg.onrender.com').split(',')
 
+# CSRF trusted origins for production (fixes admin panel access)
+CSRF_TRUSTED_ORIGINS = []
+for host in ALLOWED_HOSTS:
+    if host not in ['localhost', '127.0.0.1']:
+        CSRF_TRUSTED_ORIGINS.append(f'https://{host}')
 
 # Application definition
 
