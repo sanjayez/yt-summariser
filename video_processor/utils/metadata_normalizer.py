@@ -509,6 +509,87 @@ class YouTubeMetadataNormalizer:
             return []
 
 
+def adapt_decodo_to_ytdlp_format(decodo_data: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Adapt Decodo API response to yt-dlp format for compatibility with existing normalization
+    
+    Args:
+        decodo_data: Raw metadata from Decodo API
+        
+    Returns:
+        Dictionary formatted like yt-dlp would return
+    """
+    # Create yt-dlp compatible structure
+    yt_dlp_format = {
+        # Direct mappings
+        'id': decodo_data.get('video_id', ''),
+        'title': decodo_data.get('title', ''),
+        'description': decodo_data.get('description', ''),
+        'duration': decodo_data.get('duration'),
+        'view_count': decodo_data.get('view_count', 0),
+        'like_count': decodo_data.get('like_count', 0),
+        'comment_count': decodo_data.get('comment_count', 0),
+        'channel_id': decodo_data.get('channel_id', ''),
+        'uploader': decodo_data.get('uploader', ''),
+        'uploader_id': decodo_data.get('uploader_id', ''),
+        'uploader_url': decodo_data.get('uploader_url', ''),
+        'tags': decodo_data.get('tags', []),
+        'categories': decodo_data.get('categories', []),
+        'age_limit': decodo_data.get('age_limit', 0),
+        'is_live': decodo_data.get('is_live', False),
+        
+        # Date conversion (YYYYMMDD to YYYY-MM-DD)
+        'upload_date': decodo_data.get('upload_date', ''),
+        
+        # Channel name mapping
+        'channel': decodo_data.get('uploader', ''),  # yt-dlp uses 'channel' field
+        
+        # Thumbnail selection - get best quality
+        'thumbnail': '',
+        'thumbnails': decodo_data.get('thumbnails', []),
+        
+        # Fields that Decodo doesn't provide but yt-dlp might have
+        'language': None,  # Will default to 'en' in normalizer
+        'channel_follower_count': None,  # Not available in Decodo
+        'artist': None,
+        'track': None,
+        'album': None,
+        'creator': None,
+        'alt_title': None,
+        'availability': None,
+        'original_url': f"https://www.youtube.com/watch?v={decodo_data.get('video_id', '')}",
+        'webpage_url': f"https://www.youtube.com/watch?v={decodo_data.get('video_id', '')}",
+        'webpage_url_basename': 'watch',
+        'webpage_url_domain': 'youtube.com',
+        'extractor': 'youtube',
+        'extractor_key': 'Youtube',
+        
+        # Engagement data (heatmap) - not available in Decodo
+        'heatmap': None,
+    }
+    
+    # Process thumbnails to find best quality
+    thumbnails = decodo_data.get('thumbnails', [])
+    if thumbnails:
+        # Sort by width/height to get highest quality
+        sorted_thumbnails = sorted(
+            [t for t in thumbnails if t.get('url')],
+            key=lambda t: (t.get('width', 0) * t.get('height', 0)),
+            reverse=True
+        )
+        if sorted_thumbnails:
+            yt_dlp_format['thumbnail'] = sorted_thumbnails[0].get('url', '')
+    
+    # Process upload_date from YYYYMMDD to YYYY-MM-DD if needed
+    upload_date = decodo_data.get('upload_date', '')
+    if upload_date and len(upload_date) == 8:
+        # Keep as is - normalizer will handle the conversion
+        yt_dlp_format['upload_date'] = upload_date
+    
+    logger.debug(f"Adapted Decodo metadata for video {yt_dlp_format.get('id')} to yt-dlp format")
+    return yt_dlp_format
+
+
 def normalize_youtube_metadata(raw_info: Dict[str, Any]) -> Dict[str, Any]:
     """
     Convenience function for metadata normalization

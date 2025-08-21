@@ -17,7 +17,8 @@ from ..utils import (
     timeout, idempotent_task, handle_dead_letter_task, 
     update_task_progress, add_video_to_exclusion_table, extract_video_id_from_url
 )
-from ..utils.metadata_normalizer import normalize_youtube_metadata
+from ..utils.metadata_normalizer import normalize_youtube_metadata, adapt_decodo_to_ytdlp_format
+from ..services.decodo_service import decodo_service
 
 logger = logging.getLogger(__name__)
 
@@ -163,35 +164,63 @@ def extract_video_metadata(self, url_request_id):
         # Redis progress tracking for SearchProgressAggregator
         update_task_progress(self, 'extracting_metadata', 10)
         
-        # Extract metadata using yt-dlp with anti-bot detection measures
-        ydl_opts = {
-            'quiet': True,
-            'no_warnings': True,
-            'skip_download': True,
-            'extract_flat': False,
-            
-            # Anti-bot detection measures
-            'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
-            'sleep_interval': 1,              # 1 second between requests
-            'max_sleep_interval': 5,          # Random sleep up to 5 seconds
-            'extractor_retries': 3,           # Retry failed extractions
-            'retries': 3,                     # General retry count
-            
-            # HTTP headers to mimic real browser
-            'http_headers': {
-                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-                'Accept-Language': 'en-us,en;q=0.5',
-                'Accept-Encoding': 'gzip, deflate',
-                'DNT': '1',
-                'Connection': 'keep-alive',
-                'Upgrade-Insecure-Requests': '1',
+        # Extract video_id from URL for Decodo
+        video_id = extract_video_id_from_url(url_request.url)
+        logger.info(f"Extracted video_id: '{video_id}' from URL: {url_request.url}")
+        info = None
+        
+        # Try Decodo first (no bot detection issues)
+        if video_id and decodo_service:
+            try:
+                logger.info(f"Attempting metadata extraction via Decodo for video {video_id}")
+                decodo_result = decodo_service.extract_metadata(video_id)
+                
+                if decodo_result['success'] and decodo_result['metadata']:
+                    # Convert Decodo format to yt-dlp format for compatibility
+                    info = adapt_decodo_to_ytdlp_format(decodo_result['metadata'])
+                    logger.info(f"Successfully extracted metadata via Decodo for {info.get('title', 'Unknown')}")
+                else:
+                    logger.warning(f"Decodo metadata extraction failed: {decodo_result.get('error', 'Unknown error')}")
+            except Exception as e:
+                logger.warning(f"Decodo metadata extraction error: {e}. Falling back to yt-dlp")
+        
+        else:
+            if not video_id:
+                logger.warning(f"Could not extract video_id from URL: {url_request.url}, skipping Decodo")
+            if not decodo_service:
+                logger.warning("Decodo service not available (DECODO_AUTH_TOKEN not configured), skipping Decodo")
+        
+        # Fallback to yt-dlp if Decodo fails or video_id not extractable
+        if not info:
+            logger.info("Using yt-dlp for metadata extraction")
+            ydl_opts = {
+                'quiet': True,
+                'no_warnings': True,
+                'skip_download': True,
+                'extract_flat': False,
+                
+                # Anti-bot detection measures
+                'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+                'sleep_interval': 1,              # 1 second between requests
+                'max_sleep_interval': 5,          # Random sleep up to 5 seconds
+                'extractor_retries': 3,           # Retry failed extractions
+                'retries': 3,                     # General retry count
+                
+                # HTTP headers to mimic real browser
+                'http_headers': {
+                    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+                    'Accept-Language': 'en-us,en;q=0.5',
+                    'Accept-Encoding': 'gzip, deflate',
+                    'DNT': '1',
+                    'Connection': 'keep-alive',
+                    'Upgrade-Insecure-Requests': '1',
+                }
             }
-        }
-        
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(url_request.url, download=False)
-        
-        logger.info(f"Successfully extracted metadata for {info.get('title', 'Unknown')}")
+            
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                info = ydl.extract_info(url_request.url, download=False)
+            
+            logger.info(f"Successfully extracted metadata via yt-dlp for {info.get('title', 'Unknown')}")
         
         # Normalize metadata using the centralized normalization layer
         metadata = normalize_youtube_metadata(info)

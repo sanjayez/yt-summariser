@@ -179,9 +179,115 @@ class DecodoTranscriptService:
         except Exception as e:
             logger.error(f"Error parsing Decodo response: {e}")
             return transcript_segments
+    
+    def extract_metadata(self, video_id: str) -> Dict:
+        """
+        Extract metadata for a YouTube video using Decodo API
+        
+        Args:
+            video_id: YouTube video ID (e.g., 'dQw4w9WgXcQ')
+            
+        Returns:
+            Dict with success status and metadata
+        """
+        logger.info(f"Extracting metadata for video {video_id} using Decodo API")
+        
+        headers = {
+            'Accept': 'application/json',
+            'Authorization': f'Basic {self.auth_token}',
+            'Content-Type': 'application/json'
+        }
+        
+        payload = {
+            "target": "youtube_metadata",
+            "query": video_id
+        }
+        
+        try:
+            response = requests.post(
+                self.api_url, 
+                headers=headers, 
+                json=payload, 
+                timeout=self.timeout
+            )
+            
+            if response.status_code == 200:
+                data = response.json()
+                
+                if 'results' in data and data['results']:
+                    results = data['results']
+                    # Handle case where results might be a list
+                    if isinstance(results, list):
+                        if len(results) > 0:
+                            results = results[0]  # Take the first result
+                        else:
+                            logger.warning(f"Empty results list for video {video_id}")
+                            return {
+                                'success': False,
+                                'metadata': None,
+                                'error': 'Empty results list'
+                            }
+                    
+                    # Extract the actual metadata from nested structure
+                    if isinstance(results, dict) and 'content' in results and 'results' in results['content']:
+                        metadata = results['content']['results']
+                        logger.info(f"Successfully extracted metadata for video {video_id}")
+                        return {
+                            'success': True,
+                            'metadata': metadata,
+                            'error': None
+                        }
+                    else:
+                        logger.warning(f"Unexpected Decodo response structure for video {video_id}")
+                        return {
+                            'success': False,
+                            'metadata': None,
+                            'error': 'Unexpected response structure'
+                        }
+                else:
+                    logger.warning(f"No metadata found for video {video_id}")
+                    return {
+                        'success': False,
+                        'metadata': None,
+                        'error': 'No metadata found in response'
+                    }
+            else:
+                logger.error(f"Decodo API error for video {video_id}: HTTP {response.status_code}")
+                return {
+                    'success': False,
+                    'metadata': None,
+                    'error': f'API error: HTTP {response.status_code}'
+                }
+                
+        except requests.exceptions.Timeout:
+            logger.error(f"Timeout extracting metadata for video {video_id}")
+            return {
+                'success': False,
+                'metadata': None,
+                'error': 'Request timeout'
+            }
+        except requests.exceptions.RequestException as e:
+            logger.error(f"Request error extracting metadata for video {video_id}: {e}")
+            return {
+                'success': False,
+                'metadata': None,
+                'error': f'Request error: {str(e)}'
+            }
+        except Exception as e:
+            logger.error(f"Unexpected error extracting metadata for video {video_id}: {e}")
+            return {
+                'success': False,
+                'metadata': None,
+                'error': f'Unexpected error: {str(e)}'
+            }
 
 # Global service instance
-decodo_service = DecodoTranscriptService()
+try:
+    decodo_service = DecodoTranscriptService()
+    logger.info("Decodo service initialized successfully")
+except ValueError as e:
+    logger.warning(f"Decodo service not available: {e}")
+    decodo_service = None
 
 def extract_youtube_transcript(video_id: str, language_code: str = "en") -> Tuple[bool, Dict]:
     """
