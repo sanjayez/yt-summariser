@@ -27,3 +27,4 @@ youtube-transcript-api==1.1.1
 requests==2.32.3
 yt-dlp==2025.6.30
 youtube-search-python==1.6.6
+pinecone-client==5.0.1
