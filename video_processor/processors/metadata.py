@@ -163,12 +163,29 @@ def extract_video_metadata(self, url_request_id):
         # Redis progress tracking for SearchProgressAggregator
         update_task_progress(self, 'extracting_metadata', 10)
         
-        # Extract metadata using yt-dlp
+        # Extract metadata using yt-dlp with anti-bot detection measures
         ydl_opts = {
             'quiet': True,
             'no_warnings': True,
             'skip_download': True,
             'extract_flat': False,
+            
+            # Anti-bot detection measures
+            'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+            'sleep_interval': 1,              # 1 second between requests
+            'max_sleep_interval': 5,          # Random sleep up to 5 seconds
+            'extractor_retries': 3,           # Retry failed extractions
+            'retries': 3,                     # General retry count
+            
+            # HTTP headers to mimic real browser
+            'http_headers': {
+                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+                'Accept-Language': 'en-us,en;q=0.5',
+                'Accept-Encoding': 'gzip, deflate',
+                'DNT': '1',
+                'Connection': 'keep-alive',
+                'Upgrade-Insecure-Requests': '1',
+            }
         }
         
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
