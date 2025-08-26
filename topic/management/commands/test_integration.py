@@ -97,8 +97,7 @@ class Command(BaseCommand):
 
     def wait_for_completion(self, search_id, max_wait_time=600):
         """Wait for the search processing to complete"""
-        # Note: SearchStatusAPIView doesn't exist, so we'll use a simple approach
-        from topic.models import SearchRequest
+        # Note: SearchStatusAPIView doesn't exist; use DB polling against the SearchRequest model
         
         start_time = time.time()
         while time.time() - start_time < max_wait_time:
