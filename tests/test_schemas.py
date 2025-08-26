@@ -240,17 +240,17 @@ class UnifiedProcessResponseSchemaTest(TestCase):
         self.assertEqual(schema.remaining_limit, data["remaining_limit"])
     
     def test_missing_session_id(self):
-        """Test validation error when session_id is missing"""
+        """Test that missing session_id is allowed (it's optional)"""
         data = {
             "status": "processing",
             "remaining_limit": 2
         }
         
-        with self.assertRaises(ValidationError) as context:
-            UnifiedProcessResponse(**data)
-        
-        errors = context.exception.errors()
-        self.assertTrue(any(error['loc'] == ('session_id',) for error in errors))
+        # This should NOT raise an error since session_id is optional
+        schema = UnifiedProcessResponse(**data)
+        self.assertEqual(schema.status, "processing")
+        self.assertEqual(schema.remaining_limit, 2)
+        self.assertIsNone(schema.session_id)
     
     def test_missing_status(self):
         """Test validation error when status is missing"""
@@ -379,9 +379,13 @@ class UnifiedProcessResponseSchemaTest(TestCase):
         self.assertTrue(len(examples) > 0, "Response schema should have examples")
         
         # Validate each example
-        for example in examples:
+        for i, example in enumerate(examples):
             schema = UnifiedProcessResponse(**example)
-            self.assertIsNotNone(schema.session_id)
+            # session_id is optional - first example has it, second doesn't
+            if i == 0:  # First example should have session_id
+                self.assertIsNotNone(schema.session_id)
+            else:  # Second example (rate_limited) doesn't have session_id
+                self.assertIsNone(schema.session_id)
             self.assertIsNotNone(schema.status)
             self.assertIsNotNone(schema.remaining_limit)
     

@@ -1,12 +1,11 @@
 """
-Unit tests for UnifiedGatewayView and SessionInfoView
+Unit tests for UnifiedGatewayView
 Tests request handling, validation, rate limiting integration, and response format
 """
 from django.test import TestCase, Client
 from django.urls import reverse
-from unittest.mock import patch, Mock
+from unittest.mock import patch
 from api.models import UnifiedSession
-from api.services.session_service import SessionService
 import json
 import uuid
 
@@ -234,7 +233,8 @@ class UnifiedGatewayViewTest(TestCase):
         self.assertEqual(response2.status_code, 200)
         
         data2 = response2.json()
-        self.assertEqual(data2['session_id'], session_id)  # Same session
+        # session_id should NOT be in response for existing sessions
+        self.assertNotIn('session_id', data2)  # Not returned for existing sessions
         self.assertEqual(data2['remaining_limit'], 1)  # Decremented
         
         # Verify session has both requests
@@ -371,154 +371,3 @@ class UnifiedGatewayViewTest(TestCase):
             self.assertIn('error', data)
             self.assertEqual(data['error'], 'Internal server error')
 
-
-class SessionInfoViewTest(TestCase):
-    """Test SessionInfoView functionality"""
-    
-    def setUp(self):
-        """Set up test data"""
-        self.client = Client()
-        self.url = reverse('session_info')  # /api/session/info/
-        self.test_ip = "192.168.1.100"
-        
-        # Create test session
-        self.test_session = UnifiedSession.objects.create(
-            user_ip=self.test_ip,
-            video_requests=1,
-            playlist_requests=1
-        )
-        self.session_id = str(self.test_session.session_id)
-    
-    def test_get_method_only(self):
-        """Test that only GET method is allowed"""
-        # POST should not be allowed
-        response = self.client.post(self.url)
-        self.assertEqual(response.status_code, 405)
-        
-        # PUT should not be allowed
-        response = self.client.put(self.url)
-        self.assertEqual(response.status_code, 405)
-    
-    def test_valid_session_info_request(self):
-        """Test valid session info request"""
-        response = self.client.get(
-            self.url,
-            HTTP_X_SESSION_ID=self.session_id
-        )
-        
-        self.assertEqual(response.status_code, 200)
-        
-        data = response.json()
-        
-        # Check required fields
-        required_fields = [
-            'session_id', 'user_ip', 'total_requests', 'video_requests',
-            'playlist_requests', 'topic_requests', 'remaining_limit',
-            'created_at', 'last_request_at', 'has_account'
-        ]
-        
-        for field in required_fields:
-            self.assertIn(field, data, f"Missing field: {field}")
-        
-        # Check values
-        self.assertEqual(data['session_id'], self.session_id)
-        self.assertEqual(data['user_ip'], self.test_ip)
-        self.assertEqual(data['total_requests'], 2)  # 1 + 1 + 0
-        self.assertEqual(data['video_requests'], 1)
-        self.assertEqual(data['playlist_requests'], 1)
-        self.assertEqual(data['topic_requests'], 0)
-        self.assertEqual(data['remaining_limit'], 1)  # 3 - 2 = 1
-        self.assertFalse(data['has_account'])
-    
-    def test_missing_session_id_header(self):
-        """Test request without X-Session-ID header"""
-        response = self.client.get(self.url)
-        
-        self.assertEqual(response.status_code, 400)
-        
-        data = response.json()
-        self.assertIn('error', data)
-        self.assertIn('X-Session-ID header is required', data['error'])
-    
-    def test_invalid_session_id(self):
-        """Test request with invalid session ID"""
-        fake_session_id = str(uuid.uuid4())
-        
-        response = self.client.get(
-            self.url,
-            HTTP_X_SESSION_ID=fake_session_id
-        )
-        
-        self.assertEqual(response.status_code, 404)
-        
-        data = response.json()
-        self.assertIn('error', data)
-        self.assertIn('Session not found', data['error'])
-    
-    def test_malformed_session_id(self):
-        """Test request with malformed session ID"""
-        response = self.client.get(
-            self.url,
-            HTTP_X_SESSION_ID="invalid-uuid"
-        )
-        
-        self.assertEqual(response.status_code, 404)  # Should not find session
-    
-    def test_session_info_with_user_account(self):
-        """Test session info for session with associated user account"""
-        from django.contrib.auth.models import User
-        
-        user = User.objects.create_user(
-            username="testuser",
-            email="test@example.com",
-            password="testpass123"
-        )
-        
-        self.test_session.user_account = user
-        self.test_session.save()
-        
-        response = self.client.get(
-            self.url,
-            HTTP_X_SESSION_ID=self.session_id
-        )
-        
-        self.assertEqual(response.status_code, 200)
-        
-        data = response.json()
-        self.assertTrue(data['has_account'])
-    
-    def test_session_info_timestamps_format(self):
-        """Test that timestamps are properly formatted"""
-        response = self.client.get(
-            self.url,
-            HTTP_X_SESSION_ID=self.session_id
-        )
-        
-        self.assertEqual(response.status_code, 200)
-        
-        data = response.json()
-        
-        # Check timestamp format (ISO format)
-        created_at = data['created_at']
-        last_request_at = data['last_request_at']
-        
-        # Should be valid ISO format strings
-        from datetime import datetime
-        datetime.fromisoformat(created_at.replace('Z', '+00:00'))
-        datetime.fromisoformat(last_request_at.replace('Z', '+00:00'))
-    
-    @patch('api.views.gateway_views.SessionService.get_session_info')
-    def test_service_error_handling(self, mock_get_session_info):
-        """Test handling of service layer errors"""
-        mock_get_session_info.side_effect = Exception("Service error")
-        
-        response = self.client.get(
-            self.url,
-            HTTP_X_SESSION_ID=self.session_id
-        )
-        
-        self.assertEqual(response.status_code, 500)
-        
-        data = response.json()
-        self.assertIn('error', data)
-        self.assertEqual(data['error'], 'Internal server error')

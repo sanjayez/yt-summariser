@@ -84,20 +84,19 @@ class UnifiedProcessRequest(BaseModel):
 
 class UnifiedProcessResponse(BaseModel):
     """Response schema for unified processing endpoint"""
-    session_id: str = Field(..., description="Session ID for tracking requests")
     status: str = Field(..., description="Request status (processing, rate_limited, error)")
     remaining_limit: int = Field(..., description="Number of requests remaining for the day")
+    session_id: Optional[str] = Field(None, description="Session ID for new sessions only")
     
     class Config:
         json_schema_extra = {
             "examples": [
                 {
-                    "session_id": "550e8400-e29b-41d4-a716-446655440000",
                     "status": "processing",
-                    "remaining_limit": 2
+                    "remaining_limit": 2,
+                    "session_id": "550e8400-e29b-41d4-a716-446655440000"
                 },
                 {
-                    "session_id": "550e8400-e29b-41d4-a716-446655440000",
                     "status": "rate_limited",
                     "remaining_limit": 0
                 }

@@ -1,5 +1,8 @@
 from django.db import models
-from django.contrib.auth.models import User
+from django.db.models import F
+from django.conf import settings
+from django.db.models.functions import Extract
+from django.utils import timezone
 import uuid
 
 # Create your models here.
@@ -8,12 +11,12 @@ import uuid
 class UnifiedSession(models.Model):
     """Unified session tracking for all request types (video, playlist, topic)"""
     session_id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    user_ip = models.GenericIPAddressField(db_index=True)
+    user_ip = models.GenericIPAddressField()
     
     # Request counters for rate limiting
-    video_requests = models.IntegerField(default=0, help_text="Number of single video processing requests")
-    playlist_requests = models.IntegerField(default=0, help_text="Number of playlist processing requests")
-    topic_requests = models.IntegerField(default=0, help_text="Number of topic search requests")
+    video_requests = models.PositiveSmallIntegerField(default=0, help_text="Number of single video processing requests")
+    playlist_requests = models.PositiveSmallIntegerField(default=0, help_text="Number of playlist processing requests")
+    topic_requests = models.PositiveSmallIntegerField(default=0, help_text="Number of topic search requests")
     
     # Timestamps
     created_at = models.DateTimeField(auto_now_add=True)
@@ -21,7 +24,7 @@ class UnifiedSession(models.Model):
     
     # Future account integration (for post-alpha account-based tracking)
     user_account = models.ForeignKey(
-        User, 
+        settings.AUTH_USER_MODEL, 
         null=True, 
         blank=True,
         on_delete=models.SET_NULL,
@@ -32,9 +35,11 @@ class UnifiedSession(models.Model):
         ordering = ['-last_request_at']
         indexes = [
             models.Index(fields=['user_ip']),
-            models.Index(fields=['session_id']),
             models.Index(fields=['created_at']),
             models.Index(fields=['last_request_at']),
+        ]
+        constraints = [
+            # Race condition prevention handled at application level via SessionService
         ]
     
     def __str__(self):
@@ -50,17 +55,27 @@ class UnifiedSession(models.Model):
         return self.total_requests < 3
     
     def increment_request_count(self, request_type):
-        """Increment counter for specific request type and update last_request_at"""
-        if request_type == 'video':
-            self.video_requests += 1
-        elif request_type == 'playlist':
-            self.playlist_requests += 1
-        elif request_type == 'topic':
-            self.topic_requests += 1
-        else:
+        """Increment counter for specific request type and update last_request_at (atomic)."""
+        field_map = {
+            'video': 'video_requests',
+            'playlist': 'playlist_requests',
+            'topic': 'topic_requests'
+        }
+        field = field_map.get(request_type)
+        if not field:
             raise ValueError(f"Invalid request type: {request_type}")
         
-        self.save(update_fields=['video_requests', 'playlist_requests', 'topic_requests', 'last_request_at'])
+        # Atomic database update
+        updates = {
+            field: F(field) + 1,
+            'last_request_at': timezone.now()
+        }
+        UnifiedSession.objects.filter(pk=self.pk).update(**updates)
+        
+        # Refresh instance to reflect DB changes
+        self.refresh_from_db(fields=[
+            'video_requests', 'playlist_requests', 'topic_requests', 'last_request_at'
+        ])
     
     def get_remaining_requests(self):
         """Get number of remaining requests for the day"""

@@ -3,7 +3,7 @@ Unit tests for UnifiedSession model
 Tests model methods, properties, and business logic
 """
 from django.test import TestCase
-from django.contrib.auth.models import User
+from django.contrib.auth import get_user_model
 from api.models import UnifiedSession
 import uuid
 
@@ -17,6 +17,7 @@ class UnifiedSessionModelTest(TestCase):
         self.session = UnifiedSession.objects.create(user_ip=self.test_ip)
         
         # Create a user for account integration tests
+        User = get_user_model()
         self.test_user = User.objects.create_user(
             username="testuser",
             email="test@example.com",
@@ -217,21 +218,42 @@ class UnifiedSessionModelTest(TestCase):
         for index in meta.indexes:
             index_fields.extend(index.fields)
         
-        expected_indexed_fields = ['user_ip', 'session_id', 'created_at', 'last_request_at']
+        # Note: session_id is the primary key, so it has an implicit index
+        # We only check for explicit indexes defined in Meta.indexes
+        expected_indexed_fields = ['user_ip', 'created_at', 'last_request_at']
         
         for field in expected_indexed_fields:
             self.assertIn(field, index_fields, f"Index missing for field: {field}")
+        
+        # Verify session_id is the primary key (which automatically has an index)
+        self.assertEqual(meta.pk.name, 'session_id', "session_id should be the primary key")
     
-    def test_multiple_sessions_same_ip(self):
-        """Test multiple sessions can have same IP"""
-        # Create another session with same IP
-        session2 = UnifiedSession.objects.create(user_ip=self.test_ip)
+    def test_application_level_session_prevention(self):
+        """Test that application logic prevents multiple sessions per IP per day"""
+        from api.services.session_service import SessionService
+        from unittest.mock import Mock
+        from django.utils import timezone
         
-        # Should have different session IDs
-        self.assertNotEqual(self.session.session_id, session2.session_id)
+        # Create a mock request with the same IP
+        mock_request = Mock()
+        mock_request.META = {'REMOTE_ADDR': self.test_ip}
         
-        # Both should have same IP
-        self.assertEqual(self.session.user_ip, session2.user_ip)
+        # First call should return existing session
+        session1, created1 = SessionService.get_or_create_session(mock_request)
+        self.assertEqual(session1.session_id, self.session.session_id)
+        self.assertFalse(created1)  # Should find existing session
+        
+        # Second call should also return the same existing session
+        session2, created2 = SessionService.get_or_create_session(mock_request)
+        self.assertEqual(session2.session_id, self.session.session_id)
+        self.assertFalse(created2)  # Should find existing session
+        
+        # Verify only one session exists for this IP today
+        sessions_today = UnifiedSession.objects.filter(
+            user_ip=self.test_ip,
+            created_at__date=timezone.now().date()
+        )
+        self.assertEqual(sessions_today.count(), 1)
     
     def test_session_id_uniqueness(self):
         """Test that session IDs are unique"""

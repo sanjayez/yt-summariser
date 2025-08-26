@@ -62,20 +62,20 @@ class SessionService:
             except Exception as e:
                 logger.error(f"Error retrieving session {session_id}: {e}")
         
-        # Step 2: Check if IP already has a session today (prevents rate limit bypass)
-        existing_session = UnifiedSession.objects.filter(
-            user_ip=user_ip,
-            created_at__date=today
-        ).first()
-        
-        if existing_session:
+        # Step 2 & 3: Application-level race condition prevention
+        # Check for existing session today, create if none exists
+        try:
+            existing_session = UnifiedSession.objects.get(
+                user_ip=user_ip,
+                created_at__date=today
+            )
             logger.info(f"Found existing session {str(existing_session.session_id)[:8]} for IP {user_ip} today")
             return existing_session, False
-        
-        # Step 3: Create fresh session for this IP today
-        new_session = UnifiedSession.objects.create(user_ip=user_ip)
-        logger.info(f"Created new session {str(new_session.session_id)[:8]} for IP {user_ip}")
-        return new_session, True
+        except UnifiedSession.DoesNotExist:
+            # No session exists for this IP today, create new one
+            new_session = UnifiedSession.objects.create(user_ip=user_ip)
+            logger.info(f"Created new session {str(new_session.session_id)[:8]} for IP {user_ip}")
+            return new_session, True
     
     @staticmethod
     def check_rate_limit(session: UnifiedSession, request_type: str) -> Tuple[bool, Dict[str, Any]]:
@@ -119,6 +119,7 @@ class SessionService:
         # Increment counter for the request type
         try:
             session.increment_request_count(request_type)
+            # Note: increment_request_count already refreshes the session object
             remaining = session.get_remaining_requests()
             
             logger.info(

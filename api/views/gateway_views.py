@@ -62,15 +62,18 @@ class UnifiedGatewayView(APIView):
             allowed, response_data = SessionService.check_rate_limit(session, request_type)
             
             if not allowed:
-                # Rate limit exceeded
-                logger.warning(f"Rate limit exceeded for session {str(session.session_id)[:8]}")
-                # Use UnifiedProcessResponse for rate-limited response as well
+                # Map service status to HTTP status
+                status_str = response_data.get('status', 'error')
+                http_status = (
+                    status.HTTP_429_TOO_MANY_REQUESTS
+                    if status_str == 'rate_limited'
+                    else status.HTTP_500_INTERNAL_SERVER_ERROR
+                )
                 unified_response = UnifiedProcessResponse(
-                    session_id=response_data['session_id'],
-                    status=response_data['status'],
+                    status=status_str,
                     remaining_limit=response_data['remaining_limit']
                 )
-                return Response(unified_response.model_dump(), status=status.HTTP_429_TOO_MANY_REQUESTS)
+                return Response(unified_response.model_dump(), status=http_status)
             
             # Log successful request
             logger.info(
@@ -80,13 +83,14 @@ class UnifiedGatewayView(APIView):
             )
             
             # Return clean, structured response using Pydantic schema
+            # Include session_id only for new sessions
             unified_response = UnifiedProcessResponse(
-                session_id=response_data['session_id'],
                 status=response_data['status'],
-                remaining_limit=response_data['remaining_limit']
+                remaining_limit=response_data['remaining_limit'],
+                session_id=str(session.session_id) if is_new else None
             )
             
-            return Response(unified_response.model_dump(), status=status.HTTP_200_OK)
+            return Response(unified_response.model_dump(exclude_none=True), status=status.HTTP_200_OK)
             
         except Exception as e:
             logger.error(f"Unexpected error in UnifiedGatewayView: {e}", exc_info=True)
@@ -95,46 +99,3 @@ class UnifiedGatewayView(APIView):
                 'message': 'An unexpected error occurred while processing your request'
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
-
-class SessionInfoView(APIView):
-    """
-    Get detailed information about a session for debugging/monitoring.
-    """
-    
-    # TODO: Add OpenAPI documentation when drf_spectacular is available
-    def get(self, request):
-        """Get session information from X-Session-ID header"""
-        session_id = request.headers.get('X-Session-ID')
-        
-        if not session_id:
-            return Response({
-                'error': 'X-Session-ID header is required'
-            }, status=status.HTTP_400_BAD_REQUEST)
-        
-        try:
-            # Validate UUID format first
-            from uuid import UUID
-            try:
-                UUID(session_id)
-            except ValueError:
-                logger.error(f"Error retrieving session info: {session_id} is not a valid UUID")
-                return Response({
-                    'error': 'Session not found'
-                }, status=status.HTTP_404_NOT_FOUND)
-            
-            from api.models import UnifiedSession
-            session = UnifiedSession.objects.filter(session_id=session_id).first()
-            
-            if not session:
-                return Response({
-                    'error': 'Session not found'
-                }, status=status.HTTP_404_NOT_FOUND)
-            
-            session_info = SessionService.get_session_info(session)
-            return Response(session_info, status=status.HTTP_200_OK)
-            
-        except Exception as e:
-            logger.error(f"Error retrieving session info: Service error")
-            return Response({
-                'error': 'Internal server error'
-            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
