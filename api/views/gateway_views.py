@@ -43,7 +43,7 @@ class UnifiedGatewayView(APIView):
                 logger.warning(f"Request validation failed: {e}")
                 return Response({
                     'error': 'Invalid request data',
-                    'details': str(e)
+                    'message': 'Please check your request format'
                 }, status=status.HTTP_400_BAD_REQUEST)
             except (ParseError, ValueError) as e:
                 logger.warning(f"JSON parse error: {e}")
@@ -56,7 +56,17 @@ class UnifiedGatewayView(APIView):
             session_id = request.headers.get('X-Session-ID')
             
             # Get or create session
-            session, is_new = SessionService.get_or_create_session(request, session_id)
+            session_result = SessionService.get_or_create_session(request, session_id)
+            
+            # Handle invalid session case
+            if len(session_result) == 3 and session_result[2] == "invalid_session":
+                return Response({
+                    'error': 'Invalid session',
+                    'message': 'Invalid session.'
+                }, status=status.HTTP_400_BAD_REQUEST)
+            
+            # Extract session and is_new flag
+            session, is_new = session_result[0], session_result[1]
             
             # Check rate limit and update counters
             allowed, response_data = SessionService.check_rate_limit(session, request_type)
@@ -69,11 +79,19 @@ class UnifiedGatewayView(APIView):
                     if status_str == 'rate_limited'
                     else status.HTTP_500_INTERNAL_SERVER_ERROR
                 )
-                unified_response = UnifiedProcessResponse(
-                    status=status_str,
-                    remaining_limit=response_data['remaining_limit']
-                )
-                return Response(unified_response.model_dump(), status=http_status)
+                # Add user-friendly message for rate limiting
+                if status_str == 'rate_limited':
+                    return Response({
+                        'status': 'rate_limited',
+                        'remaining_limit': response_data['remaining_limit'],
+                        'message': 'Daily limit reached. Try again tomorrow'
+                    }, status=http_status)
+                else:
+                    unified_response = UnifiedProcessResponse(
+                        status=status_str,
+                        remaining_limit=response_data['remaining_limit']
+                    )
+                    return Response(unified_response.model_dump(), status=http_status)
             
             # Log successful request
             logger.info(

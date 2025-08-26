@@ -20,7 +20,7 @@ class SessionService:
     STALE_SESSION_DAYS = 1   # Sessions expire after 1 day
     
     @staticmethod
-    def get_or_create_session(request: HttpRequest, session_id: Optional[str] = None) -> Tuple[UnifiedSession, bool]:
+    def get_or_create_session(request: HttpRequest, session_id: Optional[str] = None) -> Tuple[UnifiedSession, bool, Optional[str]]:
         """
         Get existing session or create new one with IP-first validation and stale session handling.
         
@@ -34,7 +34,8 @@ class SessionService:
             session_id: Optional session ID from client
             
         Returns:
-            Tuple of (session_object, is_new_session)
+            Tuple of (session_object, is_new_session, error_type)
+            error_type is None for success, "invalid_session" for invalid session_id
         """
         user_ip = get_client_ip(request)
         today = timezone.now().date()
@@ -42,13 +43,17 @@ class SessionService:
         # Step 1: Try to use provided session_id (UX optimization)
         if session_id:
             try:
+                # Validate UUID format first
+                import uuid
+                uuid.UUID(session_id)
+                
                 session = UnifiedSession.objects.get(session_id=session_id)
                 
                 # Check if session is fresh and IP matches
                 if (session.user_ip == user_ip and 
                     session.created_at.date() == today):
                     logger.info(f"Retrieved existing session {str(session.session_id)[:8]} for IP {user_ip}")
-                    return session, False
+                    return session, False, None
                 
                 # If we're here, either IP mismatch or stale session - log the specific reason
                 if session.user_ip != user_ip:
@@ -57,10 +62,13 @@ class SessionService:
                     # IP matches but session failed freshness check - must be stale
                     logger.info(f"Session {session_id[:8]} is stale (created: {session.created_at.date()}, today: {today})")
                 
-            except UnifiedSession.DoesNotExist:
-                logger.info(f"Session {session_id[:8]} not found")
+            except (ValueError, UnifiedSession.DoesNotExist):
+                # Both malformed UUID and non-existent session get same treatment
+                logger.info(f"Invalid session provided: {session_id[:8]}...")
+                return None, False, "invalid_session"
             except Exception as e:
                 logger.error(f"Error retrieving session {session_id}: {e}")
+                return None, False, "invalid_session"
         
         # Step 2 & 3: Application-level race condition prevention
         # Check for existing session today, create if none exists
@@ -70,12 +78,12 @@ class SessionService:
                 created_at__date=today
             )
             logger.info(f"Found existing session {str(existing_session.session_id)[:8]} for IP {user_ip} today")
-            return existing_session, False
+            return existing_session, False, None
         except UnifiedSession.DoesNotExist:
             # No session exists for this IP today, create new one
             new_session = UnifiedSession.objects.create(user_ip=user_ip)
             logger.info(f"Created new session {str(new_session.session_id)[:8]} for IP {user_ip}")
-            return new_session, True
+            return new_session, True, None
     
     @staticmethod
     def check_rate_limit(session: UnifiedSession, request_type: str) -> Tuple[bool, Dict[str, Any]]:
