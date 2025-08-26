@@ -2,8 +2,8 @@
 Pydantic schemas for API request/response validation and type safety.
 This provides comprehensive type checking and validation for all API endpoints.
 """
-from pydantic import BaseModel, Field, HttpUrl, field_validator
-from typing import List, Optional, Dict, Any, Union
+from pydantic import BaseModel, Field, HttpUrl, field_validator, model_validator
+from typing import List, Optional, Dict, Any, Literal
 from uuid import UUID
 from datetime import datetime, date
 from enum import Enum
@@ -27,6 +27,81 @@ class SourceType(str, Enum):
     """Valid source types for search results"""
     SEGMENT = "segment"
     TRANSCRIPT = "transcript"
+
+
+# Unified Session Management Schemas
+class UnifiedProcessRequest(BaseModel):
+    """Request schema for unified processing endpoint (video, playlist, topic)"""
+    content: str = Field(..., description="URL for video/playlist or search query")
+    type: Literal['video', 'playlist', 'topic'] = Field(..., description="Type of processing request")
+    
+    @field_validator('content')
+    @classmethod
+    def validate_content_basic(cls, v):
+        """Basic content validation"""
+        # Strip whitespace first
+        if not v or not v.strip():
+            raise ValueError('Content cannot be empty or just whitespace')
+        return v.strip()
+    
+    @model_validator(mode='after')
+    def validate_content_by_type(self):
+        """Validate content based on request type"""
+        content = self.content
+        request_type = self.type
+        
+        if request_type in ['video', 'playlist']:
+            # For video/playlist, content should be a URL
+            if not (content.startswith('http://') or content.startswith('https://')):
+                raise ValueError('Content must be a valid URL for video/playlist requests')
+            if 'youtube.com' not in content and 'youtu.be' not in content:
+                raise ValueError('Must be a valid YouTube URL')
+        elif request_type == 'topic':
+            # For topic search, content should be a non-empty query
+            if len(content) < 4:
+                raise ValueError('Search query must be at least 4 characters long')
+        
+        return self
+    
+    class Config:
+        json_schema_extra = {
+            "examples": [
+                {
+                    "content": "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+                    "type": "video"
+                },
+                {
+                    "content": "https://www.youtube.com/playlist?list=PLrAXtmRdnEQy4Qth_4wQi_Q4",
+                    "type": "playlist"
+                },
+                {
+                    "content": "python machine learning tutorial",
+                    "type": "topic"
+                }
+            ]
+        }
+
+
+class UnifiedProcessResponse(BaseModel):
+    """Response schema for unified processing endpoint"""
+    status: str = Field(..., description="Request status (processing, rate_limited, error)")
+    remaining_limit: int = Field(..., description="Number of requests remaining for the day")
+    session_id: Optional[str] = Field(None, description="Session ID for new sessions only")
+    
+    class Config:
+        json_schema_extra = {
+            "examples": [
+                {
+                    "status": "processing",
+                    "remaining_limit": 2,
+                    "session_id": "550e8400-e29b-41d4-a716-446655440000"
+                },
+                {
+                    "status": "rate_limited",
+                    "remaining_limit": 0
+                }
+            ]
+        }
 
 
 # Request Schemas

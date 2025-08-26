@@ -8,7 +8,7 @@ from django.core.management.base import BaseCommand
 from django.test import RequestFactory
 from django.contrib.auth.models import AnonymousUser
 
-from topic.views import IntegratedSearchProcessAPIView, SearchStatusAPIView
+from topic.views import IntegratedSearchProcessAPIView
 from topic.models import SearchRequest
 
 
@@ -97,44 +97,31 @@ class Command(BaseCommand):
 
     def wait_for_completion(self, search_id, max_wait_time=600):
         """Wait for the search processing to complete"""
-        factory = RequestFactory()
-        status_view = SearchStatusAPIView()
+        # Note: SearchStatusAPIView doesn't exist; use DB polling against the SearchRequest model
         
         start_time = time.time()
         while time.time() - start_time < max_wait_time:
             try:
-                # Create status check request
-                request = factory.get(f'/api/topic/search/status/{search_id}/')
-                request.user = AnonymousUser()
-                request.META['REMOTE_ADDR'] = '127.0.0.1'
+                # Check status directly from the database
+                search_request = SearchRequest.objects.get(search_id=search_id)
                 
-                # Get status
-                response = status_view.get(request, search_id)
+                # Get status from the model
+                status = getattr(search_request, 'status', 'unknown')
                 
-                if response.status_code == 200:
-                    data = response.data
-                    status = data.get('status', 'unknown')
-                    progress = data.get('progress_percentage', 0)
-                    total_videos = data.get('total_videos', 0)
-                    completed_videos = data.get('completed_videos', 0)
-                    
-                    self.stdout.write(f'Status: {status}, Progress: {progress}%, Videos: {completed_videos}/{total_videos}')
-                    
-                    if status in ['success', 'failed']:
-                        self.stdout.write(
-                            self.style.SUCCESS(f'Processing completed with status: {status}')
-                        )
-                        self.stdout.write(f'Final results: {json.dumps(data, indent=2)}')
-                        return
-                    elif status == 'partial_success':
+                self.stdout.write(f'Status: {status}')
+                
+                if status in ['success', 'completed', 'failed']:
+                    self.stdout.write(
+                        self.style.SUCCESS(f'Processing completed with status: {status}')
+                    )
+                    return
+                elif status == 'partial_success':
                         self.stdout.write(
                             self.style.WARNING(f'Processing completed with partial success')
                         )
-                        self.stdout.write(f'Final results: {json.dumps(data, indent=2)}')
                         return
                         
-                else:
-                    self.stdout.write(f'Status check failed: {response.status_code}')
+                # If status is still processing, wait and continue
                     
             except Exception as e:
                 self.stdout.write(f'Error checking status: {str(e)}')

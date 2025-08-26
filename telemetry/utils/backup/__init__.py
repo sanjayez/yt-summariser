@@ -25,11 +25,11 @@ This compatibility layer will be maintained but may be removed in future version
 """
 
 # Re-export everything from the new focused modules for backward compatibility
-from ..logging import *
-from ..timing import *
-from ..monitoring import *
-from ..exceptions import *
-from ..resilience import *
+from ...logging import *
+from ...timing import *
+from ...monitoring import *
+from ...exceptions import *
+from ...resilience import *
 
 # For backward compatibility, also make everything available as before
 __all__ = [
