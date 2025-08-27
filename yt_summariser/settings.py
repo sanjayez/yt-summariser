@@ -63,6 +63,7 @@ INSTALLED_APPS = [
     'api',
     'video_processor',
     'topic',
+    'query_processor',
 ]
 
 MIDDLEWARE = [
