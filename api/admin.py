@@ -6,9 +6,10 @@ from django_celery_results.models import TaskResult
 
 class UnifiedSessionAdmin(admin.ModelAdmin):
     list_display = ['session_id_short', 'user_ip', 'total_requests_display', 'video_requests', 'playlist_requests', 'topic_requests', 'created_at', 'last_request_at']
-    list_filter = ['created_at', 'last_request_at', 'user_ip']
-    search_fields = ['user_ip', 'session_id']
-    readonly_fields = ['session_id', 'created_at', 'last_request_at', 'total_requests_display']
+    list_filter = ['created_at', 'last_request_at']
+    search_fields = ['user_ip', '^session_id']
+    readonly_fields = ['session_id', 'created_at', 'last_request_at', 'total_requests_display',
+                       'video_requests', 'playlist_requests', 'topic_requests']
     ordering = ['-last_request_at']
     
     fieldsets = (
