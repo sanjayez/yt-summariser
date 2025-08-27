@@ -64,16 +64,14 @@ class QueryRequest(models.Model):
     
     # Topic-specific fields (nullable for video/playlist requests)
     concepts = models.JSONField(
-        default=list, 
-        blank=True, 
-        null=True,
+        default=list,
+        blank=True,
         help_text="LLM-extracted concepts from user query (topic requests only)"
     )
     
     enhanced_queries = models.JSONField(
-        default=list, 
-        blank=True, 
-        null=True,
+        default=list,
+        blank=True,
         help_text="LLM-generated enhanced queries for search execution (topic requests only)"
     )
     
@@ -92,7 +90,7 @@ class QueryRequest(models.Model):
         help_text="List of YouTube video URLs found/processed"
     )
     
-    total_videos = models.IntegerField(
+    total_videos = models.PositiveIntegerField(
         default=0,
         help_text="Total number of videos found/processed"
     )
@@ -118,7 +116,6 @@ class QueryRequest(models.Model):
     class Meta:
         ordering = ['-created_at']
         indexes = [
-            models.Index(fields=['search_id']),
             models.Index(fields=['unified_session', 'created_at']),
             models.Index(fields=['status']),
             models.Index(fields=['request_type']),
