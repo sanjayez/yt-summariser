@@ -4,6 +4,7 @@ Handles validation for different request types (video/playlist/topic)
 """
 
 import re
+import bleach
 from django.core.exceptions import ValidationError
 from video_processor.validators import validate_youtube_url
 
@@ -41,6 +42,7 @@ def _validate_video_content(content: str, request_type: str) -> dict:
         
     Returns:
         dict: Validated content for video/playlist requests
+              - total_videos: 1 for videos, 0 for playlists (unknown until processed)
         
     Raises:
         ValidationError: If URL is invalid
@@ -64,14 +66,15 @@ def _validate_video_content(content: str, request_type: str) -> dict:
         if not _is_playlist_url(content):
             raise ValidationError("URL must be a YouTube playlist URL, not a video or channel")
     
-    return {
+    result = {
         'original_content': content,
         'video_urls': [content],  # Single item array for consistency
         'concepts': [],  # Empty for video/playlist requests
         'enhanced_queries': [],  # Empty for video/playlist requests
         'intent_type': None,  # Not applicable for video/playlist requests
-        'total_videos': 1
+        'total_videos': 1 if request_type == 'video' else 0  # 0 for playlists (unknown until processed)
     }
+    return result
 
 
 def _validate_topic_content(content: str) -> dict:
@@ -99,9 +102,12 @@ def _validate_topic_content(content: str) -> dict:
     if len(content) > 500:
         raise ValidationError("Search query cannot exceed 500 characters")
     
-    # Content validation - check for suspicious patterns
+    # Content validation - sanitize and check for suspicious patterns
     if _contains_suspicious_patterns(content):
-        raise ValidationError("Search query contains invalid characters or patterns")
+        raise ValidationError("Search query contains potentially unsafe content")
+    
+    # Clean the content using bleach for additional safety
+    content = bleach.clean(content, tags=[], attributes={}, strip=True).strip()
     
     return {
         'original_content': content,
@@ -151,7 +157,7 @@ def _is_playlist_url(url: str) -> bool:
 
 def _contains_suspicious_patterns(query: str) -> bool:
     """
-    Check for suspicious patterns in search queries.
+    Check for suspicious patterns in search queries using a simplified approach.
     
     Args:
         query: Search query to check
@@ -159,31 +165,30 @@ def _contains_suspicious_patterns(query: str) -> bool:
     Returns:
         bool: True if query contains suspicious patterns
     """
-    # Check for excessive special characters
-    special_char_ratio = sum(1 for c in query if not c.isalnum() and not c.isspace()) / len(query)
-    if special_char_ratio > 0.3:  # More than 30% special characters
+    # Sanitize the query and compare with original
+    # If bleach removes content, it was potentially malicious
+    sanitized = bleach.clean(query, tags=[], attributes={}, strip=True)
+    
+    # Check if sanitization removed significant content (potential HTML/script injection)
+    if len(sanitized) < len(query) * 0.8:  # More than 20% removed
         return True
     
-    # Check for SQL injection patterns
-    sql_patterns = [
-        r'(?i)\b(union|select|insert|update|delete|drop|create|alter)\b',
-        r'(?i)\b(or|and)\s+\d+\s*=\s*\d+',
-        r'[\'";]',
-    ]
-    
-    for pattern in sql_patterns:
-        if re.search(pattern, query):
+    # Check for excessive special characters (but more lenient)
+    if len(query) > 0:
+        special_char_ratio = sum(1 for c in query if not c.isalnum() and not c.isspace() and c not in "'-.,!?:;()") / len(query)
+        if special_char_ratio > 0.5:  # More than 50% special characters
             return True
     
-    # Check for script injection patterns
-    script_patterns = [
-        r'<script[^>]*>',
-        r'javascript:',
-        r'on\w+\s*=',
+    # Check for obviously malicious patterns (very targeted)
+    malicious_patterns = [
+        r'(?i)\b(union|select)\s+(select|from|where)\b',  # Clear SQL injection
+        r'(?i);\s*(drop|delete|truncate)\s+table\b',      # Destructive SQL
+        r'<script[^>]*>.*?</script>',                      # Script tags
+        r'javascript:\s*\w+',                             # JavaScript protocol
     ]
     
-    for pattern in script_patterns:
-        if re.search(pattern, query, re.IGNORECASE):
+    for pattern in malicious_patterns:
+        if re.search(pattern, query):
             return True
     
     return False
@@ -205,7 +210,7 @@ def is_valid_youtube_url(url: str) -> bool:
     try:
         validate_youtube_url(url.strip())
         return True
-    except:
+    except (ValueError, ValidationError):
         return False
 
 

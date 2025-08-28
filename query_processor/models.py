@@ -65,12 +65,14 @@ class QueryRequest(models.Model):
     concepts = models.JSONField(
         default=list,
         blank=True,
+        null=True,
         help_text="LLM-extracted concepts from user query (topic requests only)"
     )
     
     enhanced_queries = models.JSONField(
         default=list,
         blank=True,
+        null=True,
         help_text="LLM-generated enhanced queries for search execution (topic requests only)"
     )
     
@@ -104,6 +106,7 @@ class QueryRequest(models.Model):
     
     error_message = models.TextField(
         blank=True,
+        null=True,
         help_text="Error details if status is failed"
     )
     
@@ -119,6 +122,15 @@ class QueryRequest(models.Model):
             models.Index(fields=['status']),
             models.Index(fields=['request_type']),
             models.Index(fields=['created_at']),
+        ]
+        constraints = [
+            models.CheckConstraint(
+                check=~(
+                    models.Q(status='failed') &
+                    (models.Q(error_message__isnull=True) | models.Q(error_message=''))
+                ),
+                name='error_message_present_if_failed',
+            ),
         ]
         verbose_name = "Search Request"
         verbose_name_plural = "Search Requests"

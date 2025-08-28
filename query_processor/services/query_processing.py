@@ -19,23 +19,34 @@ logger = get_logger(__name__)
 class QueryProcessor:
     """Simple query processor with LLM enhancement and YouTube search."""
     
-    def __init__(self):
+    def __init__(self, enhancement_service: "QueryEnhancementService" = None,
+                 search_provider: "ScrapeTubeProvider" = None):
         """Initialize query processor with default services."""
-        self.enhancement_service = QueryEnhancementService()
-        self.search_provider = ScrapeTubeProvider(
+        self.enhancement_service = enhancement_service or QueryEnhancementService()
+        
+        # Safe config access with sensible fallbacks
+        limits = BUSINESS_LOGIC_CONFIG.get('DURATION_LIMITS', {}) or {}
+        min_seconds = limits.get('minimum_seconds', 60)  # 1 minute default
+        max_seconds = limits.get('maximum_seconds', None)  # No upper limit default
+        
+        self.search_provider = search_provider or ScrapeTubeProvider(
             max_results=5,
             timeout=30,
             filter_shorts=True,
             english_only=True,
-            min_duration_seconds=BUSINESS_LOGIC_CONFIG['DURATION_LIMITS']['minimum_seconds'],
-            max_duration_seconds=BUSINESS_LOGIC_CONFIG['DURATION_LIMITS']['maximum_seconds']
+            min_duration_seconds=min_seconds,
+            max_duration_seconds=max_seconds,
         )
     
     async def process_query_request(self, query_request: QueryRequest, max_videos: int = 5) -> Dict[str, Any]:
         """Process query request with LLM enhancement and YouTube search."""
         try:
-            # Enhance query with LLM (using dedicated service)
-            logger.info(f"🔍 Processing original query: '{query_request.original_content}'")
+            # Validate and clamp max_videos to prevent resource exhaustion
+            max_videos = max(1, min(int(max_videos or 5), 20))
+            
+            # Sanitize content for logging - truncate and remove newlines to prevent log injection
+            content_preview = ((query_request.original_content or "")[:200]).replace("\n", " ")
+            logger.info("Processing original query (preview): '%s'", content_preview)
             concepts, enhanced_queries, intent_type = await self.enhancement_service.enhance_query(
                 query_request.original_content
             )
@@ -64,10 +75,13 @@ class QueryProcessor:
             }
             
         except Exception as e:
-            logger.error(f"Query processing failed for {query_request.search_id}: {e}")
+            # Truncate error message to prevent DB bloat
+            err_msg = str(e)[:1000]
+            # Log full traceback for debugging - critical for production triage
+            logger.exception("Query processing failed for %s: %s", query_request.search_id, err_msg)
             
             # Update query request with error (async-safe)
-            await sync_to_async(self._update_query_request_error)(query_request, str(e))
+            await sync_to_async(self._update_query_request_error)(query_request, err_msg)
             
             return {
                 'status': 'failed',
@@ -86,29 +100,51 @@ class QueryProcessor:
         #     ]
         #     results = await asyncio.gather(*tasks)
         
+        # Normalize and deduplicate queries while preserving order
+        seen_queries = set()
+        unique_queries: List[str] = []
+        for q in (queries or []):
+            qn = (q or "").strip()
+            if qn and qn not in seen_queries:
+                seen_queries.add(qn)
+                unique_queries.append(qn)
+        
+        if not unique_queries:
+            return []
+        
+        # Limit concurrent searches for rate limiting
+        limited_queries = unique_queries[:3]
+        
         async def search_query(query: str) -> List[str]:
             """Search for a single query using ScrapeTube (current implementation)."""
             try:
-                # Use asyncio.to_thread for cleaner async execution (Python 3.9+)
-                return await asyncio.to_thread(self.search_provider.search, query)
+                # Calculate per-call limit and add timeout protection
+                per_call_max = max(1, min(max_videos, 10))
+                return await asyncio.wait_for(
+                    asyncio.to_thread(self.search_provider.search, query, per_call_max),
+                    timeout=8.0
+                )
             except Exception as e:
-                logger.error(f"Search failed for '{query}': {e}")
+                logger.error("Search failed for '%s': %s", query, e, exc_info=True)
                 return []
         
-        # Run searches concurrently (limit to 3 for rate limiting)
-        tasks = [search_query(query) for query in queries[:3]]
+        # Run searches concurrently with exception handling
+        tasks = [search_query(query) for query in limited_queries]
         results = await asyncio.gather(*tasks, return_exceptions=True)
         
-        # Collect unique URLs
+        # Flatten and deduplicate URLs from all successful searches
+        all_urls = []
+        for result in results:
+            if isinstance(result, list):  # Successful search result
+                all_urls.extend(result)
+        
+        # Deduplicate while preserving order and respecting max_videos limit
         seen_urls = set()
         video_urls = []
-        
-        for result in results:
-            if isinstance(result, list):
-                for url in result:
-                    if url not in seen_urls and len(video_urls) < max_videos:
-                        seen_urls.add(url)
-                        video_urls.append(url)
+        for url in all_urls:
+            if url not in seen_urls and len(video_urls) < max_videos:
+                seen_urls.add(url)
+                video_urls.append(url)
         
         return video_urls
     
@@ -116,17 +152,27 @@ class QueryProcessor:
                              enhanced_queries: List[str], intent_type: str, video_urls: List[str]):
         """Update QueryRequest with processing results."""
         with transaction.atomic():
-            query_request.concepts = concepts
-            query_request.enhanced_queries = enhanced_queries
-            query_request.intent_type = intent_type
-            query_request.video_urls = video_urls
-            query_request.total_videos = len(video_urls)
-            query_request.status = 'success'
-            query_request.save()
+            # Use select_for_update to ensure row lock and prevent race conditions
+            obj = QueryRequest.objects.select_for_update().get(pk=query_request.pk)
+            obj.concepts = concepts
+            obj.enhanced_queries = enhanced_queries
+            obj.intent_type = intent_type
+            obj.video_urls = video_urls
+            obj.total_videos = len(video_urls)
+            obj.status = 'success'
+            obj.error_message = ''  # Clear any previous error message for clean success state
+            # Use update_fields for performance - only update changed fields
+            obj.save(update_fields=['concepts', 'enhanced_queries', 'intent_type', 'video_urls', 'total_videos', 'status', 'error_message'])
     
     def _update_query_request_error(self, query_request: QueryRequest, error_message: str):
         """Update QueryRequest with error status."""
         with transaction.atomic():
-            query_request.status = 'failed'
-            query_request.error_message = error_message
-            query_request.save()
+            # Use select_for_update to ensure row lock and prevent race conditions
+            obj = QueryRequest.objects.select_for_update().get(pk=query_request.pk)
+            obj.status = 'failed'  # Using string literal as model doesn't expose STATUS constants
+            obj.error_message = (error_message or '')[:1000]  # Truncate to prevent field overflow
+            # Reset video fields to ensure clean error state
+            obj.video_urls = []
+            obj.total_videos = 0
+            # Use update_fields for performance - only update changed fields
+            obj.save(update_fields=['status', 'error_message', 'video_urls', 'total_videos'])

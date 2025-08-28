@@ -8,7 +8,7 @@ Query: "{original_query}"
 Please provide:
 1. Key concepts, in the order they are mentioned from the passed query (2-4 main topics)
 2. Enhanced search queries (2-3 variations that would find better videos)  
-3. Intent type (TUTORIAL, LOOKUP, REVIEW)
+3. Intent type (one of: TUTORIAL, LOOKUP, REVIEW)
 
 IMPORTANT: Return ONLY valid JSON without any markdown formatting, code blocks, or additional text. Do not wrap the response in ```json``` or any other formatting.
 
