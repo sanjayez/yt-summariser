@@ -24,15 +24,14 @@ class QueryRequest(models.Model):
     ]
     
     REQUEST_TYPE_CHOICES = [
-        ('video', 'Single Video'),
+        ('video', 'Video'),
         ('playlist', 'Playlist'),
-        ('topic', 'Topic Search'),
+        ('topic', 'Topic'),
     ]
     
     INTENT_CHOICES = [
         ('LOOKUP', 'Lookup'),
         ('TUTORIAL', 'Tutorial'),
-        ('HOW_TO', 'How To'),
         ('REVIEW', 'Review'),
     ]
     
