@@ -86,7 +86,7 @@ class QueryProcessor:
             return {
                 'status': 'failed',
                 'search_id': str(query_request.search_id),
-                'error': str(e)
+                'error': err_msg
             }
     
 

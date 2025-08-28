@@ -55,8 +55,8 @@ def _validate_video_content(content: str, request_type: str) -> dict:
     try:
         # Use existing YouTube URL validation from video_processor
         validate_youtube_url(content)
-    except Exception as e:
-        raise ValidationError(f"Invalid YouTube {request_type} URL: {str(e)}")
+    except (ValidationError, ValueError) as e:
+        raise ValidationError(f"Invalid YouTube {request_type} URL: {e}") from e
     
     # Validate specific URL type
     if request_type == 'video':
@@ -181,16 +181,15 @@ def _contains_suspicious_patterns(query: str) -> bool:
     
     # Check for obviously malicious patterns (very targeted)
     malicious_patterns = [
-        r'(?i)\b(union|select)\s+(select|from|where)\b',  # Clear SQL injection
-        r'(?i);\s*(drop|delete|truncate)\s+table\b',      # Destructive SQL
-        r'<script[^>]*>.*?</script>',                      # Script tags
-        r'javascript:\s*\w+',                             # JavaScript protocol
+        r'(?i)\b(union|select)\s+(select|from|where)\b',      # SQL injection
+        r'(?i);\s*(drop|delete|truncate)\s+table\b',          # Destructive SQL
+        r'(?is)<script[^>]*>[\s\S]*?</script>',               # Multi-line <script>
+        r'(?i)\bjavascript\s*:\s*\S+',                        # JS protocol
     ]
-    
-    for pattern in malicious_patterns:
-        if re.search(pattern, query):
-            return True
-    
+
+    if any(re.search(p, query) for p in malicious_patterns):
+        return True
+
     return False
 
 

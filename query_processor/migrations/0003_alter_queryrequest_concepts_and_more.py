@@ -38,6 +38,12 @@ class Migration(migrations.Migration):
         ),
         migrations.AddConstraint(
             model_name='queryrequest',
-            constraint=models.CheckConstraint(condition=models.Q(('status', 'failed'), models.Q(('error_message__isnull', True), ('error_message', ''), _connector='OR'), _negated=True), name='error_message_present_if_failed'),
+            constraint=models.CheckConstraint(
+                check=~models.Q(status='failed') | (
+                    models.Q(error_message__isnull=False) & 
+                    ~models.Q(error_message='')
+                ),
+                name='error_message_present_if_failed',
+            ),
         ),
     ]
