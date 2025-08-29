@@ -35,9 +35,12 @@ def _validate_video_content(content: str, request_type: str) -> dict:
     elif request_type == 'playlist' and not _is_playlist_url(content):
         raise ValidationError("URL must be a YouTube playlist URL, not a video or channel")
     
+    # Clean URL by removing extra parameters (keep only video ID)
+    cleaned_url = _clean_youtube_url(content, request_type)
+    
     result = {
-        'original_content': content,
-        'video_urls': [content],  # Single item array for consistency
+        'original_content': content,  # Keep original for audit trail
+        'video_urls': [cleaned_url],  # Use cleaned URL for processing
         'concepts': [],  # Empty for video/playlist requests
         'enhanced_queries': [],  # Empty for video/playlist requests
         'intent_type': None,  # Not applicable for video/playlist requests
@@ -92,6 +95,50 @@ def _is_playlist_url(url: str) -> bool:
     ]
     
     return any(re.search(pattern, url.strip()) for pattern in playlist_patterns)
+
+
+def _clean_youtube_url(url: str, request_type: str) -> str:
+    """ 
+    Returns:
+        str: Cleaned YouTube URL with only essential parameters
+    """
+    import urllib.parse as urlparse
+    
+    parsed = urlparse.urlparse(url)
+    query_params = urlparse.parse_qs(parsed.query)
+    
+    # Essential parameters to keep
+    if request_type == 'video':
+        # For videos: keep only 'v' parameter
+        essential_params = {}
+        if 'v' in query_params:
+            essential_params['v'] = query_params['v'][0]  # Take first value
+    elif request_type == 'playlist':
+        # For playlists: keep 'list' and optionally 'v' if it's a playlist with starting video
+        essential_params = {}
+        if 'list' in query_params:
+            essential_params['list'] = query_params['list'][0]
+        if 'v' in query_params:  # Starting video in playlist
+            essential_params['v'] = query_params['v'][0]
+    else:
+        # Fallback: keep original
+        return url
+    
+    # Rebuild URL with only essential parameters
+    if essential_params:
+        new_query = urlparse.urlencode(essential_params)
+        cleaned_url = urlparse.urlunparse((
+            parsed.scheme,
+            parsed.netloc,
+            parsed.path,
+            parsed.params,
+            new_query,
+            ''  # Remove fragment
+        ))
+        return cleaned_url
+    else:
+        # If no essential params found, return original
+        return url
 
 
 def _contains_suspicious_patterns(query: str) -> bool:

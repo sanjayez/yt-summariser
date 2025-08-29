@@ -12,39 +12,15 @@ from .query_processing import QueryProcessor
 from telemetry.logging.logger import get_logger
 
 logger = get_logger(__name__)
-
-
 class ContentRouterService:
-    """
-    Service for routing different content types to appropriate processors.
-    
-    This service acts as the main entry point for all content processing requests,
-    handling validation, database operations, and routing to the correct processors.
-    """
     
     @staticmethod
     async def route_request(unified_session, request_type: str, content: str) -> Dict[str, Any]:
-        """
-        Route request to appropriate processing workflow asynchronously.
-        
-        Args:
-            unified_session: UnifiedSession instance
-            request_type: Type of request ('video', 'playlist', 'topic')
-            content: User content (URL or query)
-            
-        Returns:
-            dict: Processing result with request info
-            
-        Raises:
-            ValidationError: If content validation fails
-            Exception: If routing or processing fails
-        """
-        logger.info(f"Routing {request_type} request for session {unified_session.session_id}")
+        logger.info(f"🔀 Routing {request_type} request for session {unified_session.session_id}")
         
         try:
             # Validate content based on request type
             validation_result = validate_request_content(content, request_type)
-            logger.debug(f"Content validation successful for {request_type} request")
             
             # Create QueryRequest record (async-safe)
             query_request = await sync_to_async(QueryRequest.objects.create)(
@@ -53,7 +29,6 @@ class ContentRouterService:
                 **validation_result,
                 status='processing'
             )
-            logger.info(f"Created QueryRequest {query_request.search_id} for {request_type}")
             
             # Route to appropriate processor
             if request_type in ['video', 'playlist']:
@@ -73,14 +48,10 @@ class ContentRouterService:
     @staticmethod
     async def _route_video_request(query_request: QueryRequest) -> Dict[str, Any]:
         try:
-            logger.info(f"Routing {query_request.request_type} request {query_request.search_id}")
-            
             # For video/playlist: Just update QueryRequest status to success
             # No LLM enhancement or search needed - it's a direct URL
             await sync_to_async(lambda: setattr(query_request, 'status', 'success'))()
             await sync_to_async(query_request.save)()
-            
-            logger.info(f"Successfully processed {query_request.request_type} request {query_request.search_id}")
             
             return {
                 'search_id': str(query_request.search_id),
@@ -94,7 +65,6 @@ class ContentRouterService:
             
         except Exception as e:
             error_msg = f"Failed to route {query_request.request_type} request: {str(e)}"
-            logger.error(error_msg)
             
             # Update QueryRequest with error
             await ContentRouterService._update_query_request_error(query_request, error_msg)
@@ -104,13 +74,10 @@ class ContentRouterService:
     @staticmethod
     async def _route_topic_request(query_request: QueryRequest) -> Dict[str, Any]:
         try:
-            logger.info(f"Routing topic request {query_request.search_id}")
             
             processor = QueryProcessor()
 
             result = await processor.process_query_request(query_request)
-            
-            logger.info(f"Completed topic processing for {query_request.search_id}: {result.get('status')}")
             
             return {
                 'search_id': str(query_request.search_id),
