@@ -44,9 +44,6 @@ class QueryProcessor:
             # Validate and clamp max_videos to prevent resource exhaustion
             max_videos = max(1, min(int(max_videos or 5), 20))
             
-            # Sanitize content for logging - truncate and remove newlines to prevent log injection
-            content_preview = ((query_request.original_content or "")[:200]).replace("\n", " ")
-            logger.info("Processing original query (preview): '%s'", content_preview)
             concepts, enhanced_queries, intent_type = await self.enhancement_service.enhance_query(
                 query_request.original_content
             )

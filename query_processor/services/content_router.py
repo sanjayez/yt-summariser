@@ -3,7 +3,6 @@ Routes different content types to appropriate processors
 """
 
 from typing import Dict, Any
-from django.db import transaction
 from django.core.exceptions import ValidationError
 
 from asgiref.sync import sync_to_async
@@ -76,8 +75,8 @@ class ContentRouterService:
         try:
             logger.info(f"Routing {query_request.request_type} request {query_request.search_id}")
             
-            # For this PR scope: Just update QueryRequest status to success
-            # Future: This will integrate with video processing workflow
+            # For video/playlist: Just update QueryRequest status to success
+            # No LLM enhancement or search needed - it's a direct URL
             await sync_to_async(lambda: setattr(query_request, 'status', 'success'))()
             await sync_to_async(query_request.save)()
             
@@ -88,7 +87,9 @@ class ContentRouterService:
                 'type': query_request.request_type,
                 'status': 'success',
                 'message': f'{query_request.request_type.title()} request processed successfully',
-                'url': query_request.video_urls[0]
+                'url': query_request.video_urls[0] if query_request.video_urls else query_request.original_content,
+                'video_urls': query_request.video_urls,
+                'total_videos': query_request.total_videos
             }
             
         except Exception as e:
@@ -98,7 +99,7 @@ class ContentRouterService:
             # Update QueryRequest with error
             await ContentRouterService._update_query_request_error(query_request, error_msg)
             
-            raise Exception(error_msg)
+            raise Exception(error_msg) from e
     
     @staticmethod
     async def _route_topic_request(query_request: QueryRequest) -> Dict[str, Any]:
@@ -131,7 +132,7 @@ class ContentRouterService:
             # Update QueryRequest with error
             await ContentRouterService._update_query_request_error(query_request, error_msg)
             
-            raise Exception(error_msg)
+            raise Exception(error_msg) from e
     
     @staticmethod
     async def _update_query_request_error(query_request: QueryRequest, error_message: str):
