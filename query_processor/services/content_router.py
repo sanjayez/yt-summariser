@@ -82,14 +82,19 @@ class ContentRouterService:
             return {
                 'search_id': str(query_request.search_id),
                 'type': 'topic',
-                'status': result.get('status', 'completed'),
-                'message': 'Topic query processing completed',
+                'status': result.get('status', 'success'),
+                'message': (
+                    'Topic query processing completed'
+                    if result.get('status') == 'success'
+                    else f"Topic query processing failed: {result.get('error', '')[:200]}"
+                ),
                 'query': query_request.original_content,
                 'concepts': result.get('concepts', []),
                 'enhanced_queries': result.get('enhanced_queries', []),
                 'intent_type': result.get('intent_type', ''),
                 'video_urls': result.get('video_urls', []),
-                'total_videos': result.get('total_videos', 0)
+                'total_videos': result.get('total_videos', 0),
+                'error': result.get('error')
             }
             
         except Exception as e:
@@ -104,10 +109,18 @@ class ContentRouterService:
     @staticmethod
     async def _update_query_request_error(query_request: QueryRequest, error_message: str):
         try:
-            await sync_to_async(lambda: setattr(query_request, 'status', 'failed'))()
-            await sync_to_async(lambda: setattr(query_request, 'error_message', error_message))()
-            await sync_to_async(query_request.save)()
-            logger.debug(f"Updated QueryRequest {query_request.search_id} with error status")
-        except Exception as e:
-            logger.error(f"Failed to update QueryRequest error status: {str(e)}")
+            err = (error_message or '')[:1000]
+            query_request.status = 'failed'
+            query_request.error_message = err
+            query_request.video_urls = []
+            query_request.total_videos = 0
+            await sync_to_async(query_request.save)(
+                update_fields=['status', 'error_message', 'video_urls', 'total_videos']
+            )
+            logger.debug("Updated QueryRequest %s with error status", query_request.search_id)
+        except Exception:
+            logger.exception(
+                "Failed to update QueryRequest error status for %s",
+                query_request.search_id
+            )
     
