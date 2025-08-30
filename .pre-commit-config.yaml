@@ -5,7 +5,7 @@ repos:
     hooks:
       # Run the linter (strict mode - will fail on quality issues)
       - id: ruff
-        args: [--fix]
+        args: [--fix, --force-exclude]
         types_or: [python, pyi, jupyter]
       # Run the formatter
       - id: ruff-format

@@ -36,13 +36,13 @@ jobs:
       run: |
         echo "🔍 Running strict Ruff linter on changed files..."
         echo "Changed files: ${{ steps.changed-files.outputs.all_changed_files }}"
-        uv run ruff check ${{ steps.changed-files.outputs.all_changed_files }} --output-format=github
+        uv run ruff check --force-exclude ${{ steps.changed-files.outputs.all_changed_files }} --output-format=github
 
     - name: Run Ruff formatting check on changed files (STRICT)
       if: steps.changed-files.outputs.any_changed == 'true'
       run: |
         echo "🎨 Checking Ruff formatting on changed files..."
-        uv run ruff format --check ${{ steps.changed-files.outputs.all_changed_files }}
+        uv run ruff format --check --force-exclude ${{ steps.changed-files.outputs.all_changed_files }}
 
     - name: Run Mypy type checking on changed files (STRICT)
       if: steps.changed-files.outputs.any_changed == 'true'
