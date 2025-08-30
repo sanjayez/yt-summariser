@@ -29,7 +29,8 @@ jobs:
       continue-on-error: true
       run: |
         echo "🔍 Running Ruff linter..."
-        uv run ruff check . --output-format=github --statistics
+        echo "📊 Current code quality status:"
+        uv run ruff check . --statistics
 
     - name: Run Ruff formatting check (informational - establishing baseline)
       continue-on-error: true
