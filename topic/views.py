@@ -77,7 +77,7 @@ class TopicSearchAPIView(APIView):
                 logger.debug(f"Using session {session.session_id} for search request")
             except Exception as e:
                 logger.error(f"Session creation failed: {e}")
-                raise APIException(f"Session creation failed: {str(e)}")
+                raise APIException(f"Session creation failed: {str(e)}") from e
 
             # Create search request record
             try:
@@ -90,7 +90,7 @@ class TopicSearchAPIView(APIView):
                     logger.debug(f"Created search request {search_request.search_id}")
             except Exception as e:
                 logger.error(f"Failed to create search request: {e}")
-                raise APIException("Failed to create search request")
+                raise APIException("Failed to create search request") from e
 
             # Dispatch Celery task for async processing
             try:
@@ -106,7 +106,7 @@ class TopicSearchAPIView(APIView):
                     f"Failed to dispatch processing task: {str(e)}"
                 )
                 search_request.save()
-                raise APIException("Failed to start background processing")
+                raise APIException("Failed to start background processing") from e
 
             # Prepare immediate response
             response_data = {
@@ -152,7 +152,7 @@ class TopicSearchAPIView(APIView):
                         f"Failed to update search request with error: {db_error}"
                     )
 
-            raise APIException(f"Internal server error: {str(e)}")
+            raise APIException(f"Internal server error: {str(e)}") from e
 
 
 class SearchAndProcessAPIView(APIView):
@@ -225,8 +225,7 @@ class SearchAndProcessAPIView(APIView):
                 )
 
                 # Trigger search processing
-                search_task = process_search_query.delay(str(search_request.search_id))
-                logger.info(f"Dispatched search task {search_task.id}")
+                process_search_query.delay(str(search_request.search_id))
 
                 # Refresh search request to get initial results
                 # Note: Search processing happens asynchronously, so initial video_urls may be empty
@@ -501,7 +500,7 @@ async def search_status_stream(request, search_id):
                                         f"Stream completion detected: {data.get('type')}"
                                     )
                                     break
-                            except:
+                            except Exception:
                                 pass
 
                         elif message["type"] == "subscribe":
@@ -675,32 +674,35 @@ async def search_status_stream(request, search_id):
                 yield f": heartbeat {poll_count} {' ' * 256}\n\n"  # Padding after each message to force flush
 
                 # Check if all processing is complete
-                if completed_count >= video_count and video_count > 0:
+                if (
+                    completed_count >= video_count
+                    and video_count > 0
+                    and poll_count >= 3
+                ):
                     # For already-failed videos, give frontend time to process updates
                     # Only complete immediately after a few polls to avoid abrupt termination
-                    if poll_count >= 3:
-                        # Send final completion message
-                        successful_videos = len(
-                            [v for v in video_progress_data if v["status"] == "success"]
-                        )
-                        failed_videos = len(
-                            [v for v in video_progress_data if v["status"] == "failed"]
-                        )
+                    # Send final completion message
+                    successful_videos = len(
+                        [v for v in video_progress_data if v["status"] == "success"]
+                    )
+                    failed_videos = len(
+                        [v for v in video_progress_data if v["status"] == "failed"]
+                    )
 
-                        yield f"data: {
-                            json.dumps(
-                                {
-                                    'type': 'processing_completed',
-                                    'search_id': str(search_request.search_id),
-                                    'total_videos': video_count,
-                                    'completed_videos': completed_count,
-                                    'successful_videos': successful_videos,
-                                    'failed_videos': failed_videos,
-                                    'message': 'All video processing completed',
-                                }
-                            )
-                        }\n\n"
-                        break
+                    yield f"data: {
+                        json.dumps(
+                            {
+                                'type': 'processing_completed',
+                                'search_id': str(search_request.search_id),
+                                'total_videos': video_count,
+                                'completed_videos': completed_count,
+                                'successful_videos': successful_videos,
+                                'failed_videos': failed_videos,
+                                'message': 'All video processing completed',
+                            }
+                        )
+                    }\n\n"
+                    break
 
                 await asyncio.sleep(2)  # Async poll every 2 seconds
 
