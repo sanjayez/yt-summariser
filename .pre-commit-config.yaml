@@ -1,0 +1,37 @@
+repos:
+  # Ruff linting and formatting
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.12.11
+    hooks:
+      # Run the linter
+      - id: ruff
+        args: [--fix]
+        types_or: [python, pyi, jupyter]
+      # Run the formatter
+      - id: ruff-format
+        types_or: [python, pyi, jupyter]
+
+  # Ty type checking using uv (temporarily disabled - will fix in next commit)
+  # - repo: local
+  #   hooks:
+  #     - id: ty-check
+  #       name: ty type check
+  #       entry: uv run ty check
+  #       language: system
+  #       types: [python]
+  #       pass_filenames: false
+  #       always_run: true
+
+  # Additional useful hooks
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v4.6.0
+    hooks:
+      - id: trailing-whitespace
+        exclude: ^.*\.(md|rst)$
+      - id: end-of-file-fixer
+        exclude: ^.*\.(md|rst)$
+      - id: check-yaml
+      - id: check-added-large-files
+        args: [--maxkb=1000]
+      - id: check-merge-conflict
+      - id: debug-statements

@@ -1,0 +1,124 @@
+[project]
+name = "yt-summariser"
+version = "0.1.0"
+description = "AI-powered YouTube video summarizer with Django backend"
+requires-python = ">=3.12"
+
+dependencies = [
+    "aiohttp>=3.8.0,<4.0.0",
+    "bleach==6.2.0",
+    "celery==5.5.3",
+    "celery-progress==0.5",
+    "channels>=4.0.0,<5.0.0",
+    "channels-redis>=4.1.0,<5.0.0",
+    "daphne==4.2.1",
+    "dj-database-url==2.2.0",
+    "django==5.2.3",
+    "django-celery-results==2.5.1",
+    "django-cors-headers==4.7.0",
+    "djangorestframework==3.16.0",
+    "fast-langdetect>=0.3.2",
+    "flower>=2.0.1",
+    "llama-index>=0.12.46,<0.13.0",
+    "llama-index-llms-google-genai==0.2.5",
+    "openai>=1.86.0,<2.0.0",
+    "pinecone-client==5.0.1",
+    "psutil>=5.9.0",
+    "psycopg2-binary==2.9.10",
+    "pydantic>=2.0.0,<3.0.0",
+    "pytest>=8.1.0",
+    "pytest-asyncio>=0.21.0,<1.0.0",
+    "python-dotenv==1.0.0",
+    "redis==6.2.0",
+    "requests==2.32.3",
+    "scrapetube==2.5.1",
+    "uvicorn==0.34.3",
+    "weaviate-client>=4.9.0,<5.0.0",
+    "youtube-search-python==1.6.6",
+    "youtube-transcript-api==1.1.1",
+    "yt-dlp==2025.6.30",
+]
+
+[dependency-groups]
+dev = [
+    "pre-commit>=4.3.0",
+    "ruff>=0.12.11",
+    "ty>=0.0.1a19",
+]
+
+# [project.scripts]
+# start-server = "start_server.sh"  # Shell scripts don't work as Python console scripts
+# start-celery = "start_celery_parallel.sh"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.ruff]
+# Set the maximum line length to 88 (Black's default)
+line-length = 88
+target-version = "py312"
+
+# Exclude directories from linting
+exclude = [
+    ".git",
+    "__pycache__",
+    "migrations",
+    "venv",
+    ".venv",
+    "build",
+    "dist",
+    "debug_logs",
+    "logs",
+    "temp_file_logger.py",
+]
+
+[tool.ruff.lint]
+# Enable specific rule sets
+select = [
+    "E",    # pycodestyle errors
+    "F",    # pyflakes
+    "UP",   # pyupgrade
+    "B",    # flake8-bugbear
+    "SIM",  # flake8-simplify
+    "I",    # isort
+    "N",    # pep8-naming
+    "DJ",   # flake8-django
+    "C4",   # flake8-comprehensions
+    "PIE",  # flake8-pie
+]
+
+# Ignore specific rules
+ignore = [
+    "E501",  # line too long (handled by formatter)
+    "B008",  # do not perform function calls in argument defaults
+    "DJ001", # avoid using `null=True` on string-based fields (common in Django)
+    "N806",  # variable in function should be lowercase (Django uses camelCase)
+]
+
+# Allow fix for all enabled rules (when `--fix`) is provided.
+fixable = ["ALL"]
+unfixable = []
+
+[tool.ruff.lint.per-file-ignores]
+# Ignore specific rules in specific files
+"*/migrations/*" = ["ALL"]
+"*/tests/*" = ["B011", "DJ008"]
+"manage.py" = ["ALL"]
+"*/admin.py" = ["F401"]  # Allow unused imports for admin registration
+"*/settings.py" = ["F401", "F403"]  # Allow star imports in settings
+"*/celery.py" = ["F401"]  # Allow unused imports in Celery config
+
+[tool.ruff.format]
+# Use double quotes for strings.
+quote-style = "double"
+# Indent with spaces, rather than tabs.
+indent-style = "space"
+# Respect magic trailing commas.
+skip-magic-trailing-comma = false
+# Automatically detect the appropriate line ending.
+line-ending = "auto"
+
+# [tool.ty]
+# Ty configuration temporarily disabled - will be fixed in a future commit
+# when Ty's configuration format stabilizes
