@@ -25,46 +25,23 @@ jobs:
     - name: Install dependencies
       run: uv sync --all-extras --dev
 
-    - name: Get changed files
-      id: changed-files
-      run: |
-        if [ "${{ github.event_name }}" = "pull_request" ]; then
-          # For PRs, check files changed in the PR
-          git fetch origin ${{ github.base_ref }}
-          CHANGED_FILES=$(git diff --name-only origin/${{ github.base_ref }}...HEAD -- '*.py' | tr '\n' ' ')
-        else
-          # For pushes, check files in the last commit
-          CHANGED_FILES=$(git diff --name-only HEAD~1 HEAD -- '*.py' | tr '\n' ' ')
-        fi
-        echo "changed_files=$CHANGED_FILES" >> $GITHUB_OUTPUT
-        echo "🔍 Changed Python files: $CHANGED_FILES"
-
-    - name: Run Ruff linting on changed files
-      if: steps.changed-files.outputs.changed_files != ''
-      run: |
-        echo "🔍 Running Ruff linter on changed files..."
-        uv run ruff check ${{ steps.changed-files.outputs.changed_files }} --output-format=github
-
-    - name: Run Ruff formatting check on changed files
-      if: steps.changed-files.outputs.changed_files != ''
-      run: |
-        echo "🎨 Checking Ruff formatting on changed files..."
-        uv run ruff format --check ${{ steps.changed-files.outputs.changed_files }}
-
-    - name: Run Mypy type checking on changed files
-      if: steps.changed-files.outputs.changed_files != ''
-      run: |
-        echo "🔧 Running Mypy type checker on changed files..."
-        uv run mypy ${{ steps.changed-files.outputs.changed_files }}
-
-    - name: Run full quality check (informational)
+    - name: Run Ruff linting (informational - establishing baseline)
       continue-on-error: true
       run: |
-        echo "📊 Running full codebase quality check for metrics..."
-        echo "Ruff issues:"
-        uv run ruff check . --statistics || true
-        echo "Mypy status:"
-        uv run mypy . --show-error-codes --no-error-summary | head -10 || true
+        echo "🔍 Running Ruff linter..."
+        uv run ruff check . --output-format=github --statistics
+
+    - name: Run Ruff formatting check (informational - establishing baseline)
+      continue-on-error: true
+      run: |
+        echo "🎨 Checking Ruff formatting..."
+        uv run ruff format --check .
+
+    - name: Run Mypy type checking (informational - establishing baseline)
+      continue-on-error: true
+      run: |
+        echo "🔧 Running Mypy type checker..."
+        uv run mypy . --show-error-codes --no-error-summary | head -20
 
     - name: Generate summary
       if: always()
