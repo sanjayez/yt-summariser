@@ -119,23 +119,6 @@ skip-magic-trailing-comma = false
 # Automatically detect the appropriate line ending.
 line-ending = "auto"
 
-[tool.ty]
-# Ty configuration - minimal setup required
-strict = true
-
-# Ignore missing imports for third-party packages using rules
-[[tool.ty.overrides]]
-include = [
-    "celery.*",
-    "scrapetube.*",
-    "yt_dlp.*",
-    "youtube_search_python.*",
-    "pinecone.*",
-    "weaviate.*",
-    "llama_index.*",
-    "channels.*",
-    "daphne.*",
-    "bleach.*",
-    "fast_langdetect.*",
-]
-rules = []
+# [tool.ty]
+# Ty configuration temporarily disabled - will be fixed in a future commit
+# when Ty's configuration format stabilizes
