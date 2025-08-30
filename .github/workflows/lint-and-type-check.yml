@@ -46,8 +46,15 @@ jobs:
 
     - name: Run Mypy type checking on changed files (STRICT)
       if: steps.changed-files.outputs.any_changed == 'true'
+      env:
+        OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        PINECONE_API_KEY: ${{ secrets.PINECONE_API_KEY }}
+        DECODO_AUTH_TOKEN: ${{ secrets.DECODO_AUTH_TOKEN }}
+        DATABASE_URL: sqlite:///ci_test.db
+        REDIS_URL: redis://localhost:6379
       run: |
         echo "🔧 Running strict Mypy type checker on changed files..."
+        echo "Changed files: ${{ steps.changed-files.outputs.all_changed_files }}"
         uv run mypy ${{ steps.changed-files.outputs.all_changed_files }}
 
     - name: No Python files changed
