@@ -11,12 +11,14 @@ repos:
       - id: ruff-format
         types_or: [python, pyi, jupyter]
 
-  # Mypy type checking (strict on changed files only)
-  - repo: https://github.com/pre-commit/mirrors-mypy
-    rev: v1.17.1
+  # Mypy type checking using local uv environment
+  - repo: local
     hooks:
-      - id: mypy
-        additional_dependencies: [django-stubs, djangorestframework-stubs, types-requests]
+      - id: mypy-local
+        name: mypy (local environment)
+        entry: uv run mypy
+        language: system
+        types: [python]
         args: [--config-file=pyproject.toml, --follow-imports=silent]
         pass_filenames: true
 
