@@ -11,5 +11,5 @@ Available workflows:
 from .search_workflow import APISearchWorkflow
 
 __all__ = [
-    'APISearchWorkflow',
+    "APISearchWorkflow",
 ]

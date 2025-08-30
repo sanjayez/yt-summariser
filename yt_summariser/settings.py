@@ -12,91 +12,96 @@ https://docs.djangoproject.com/en/5.2/ref/settings/
 
 import os
 from pathlib import Path
+
 from dotenv import load_dotenv
 
 # Fix for macOS fork safety issue with multiprocessing
-os.environ['OBJC_DISABLE_INITIALIZE_FORK_SAFETY'] = 'YES'
+os.environ["OBJC_DISABLE_INITIALIZE_FORK_SAFETY"] = "YES"
 # Additional macOS stability fixes
-os.environ['PYTHONHASHSEED'] = '0'
-os.environ['PYTHONUNBUFFERED'] = '1'
+os.environ["PYTHONHASHSEED"] = "0"
+os.environ["PYTHONUNBUFFERED"] = "1"
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
 
 # Load environment variables from .env file
-load_dotenv(BASE_DIR / '.env')
+load_dotenv(BASE_DIR / ".env")
 
 
 # Quick-start development settings - unsuitable for production
 # See https://docs.djangoproject.com/en/5.2/howto/deployment/checklist/
 
 # SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = os.getenv('SECRET_KEY', 'django-insecure-@-kj^rr)n$kq(n*j$g2^@8-r-!sxdso)4--ch)-l__gf!a)^^2')
+SECRET_KEY = os.getenv(
+    "SECRET_KEY", "django-insecure-@-kj^rr)n$kq(n*j$g2^@8-r-!sxdso)4--ch)-l__gf!a)^^2"
+)
 
 # SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = os.getenv('DEBUG', 'False').lower() == 'true'
+DEBUG = os.getenv("DEBUG", "False").lower() == "true"
 
 # Get allowed hosts from environment variable, fallback to specific hosts
-ALLOWED_HOSTS = os.getenv('ALLOWED_HOSTS', 'localhost,127.0.0.1,yt-summariser-a7fg.onrender.com').split(',')
+ALLOWED_HOSTS = os.getenv(
+    "ALLOWED_HOSTS", "localhost,127.0.0.1,yt-summariser-a7fg.onrender.com"
+).split(",")
 
 # CSRF trusted origins for production (fixes admin panel access)
 CSRF_TRUSTED_ORIGINS = []
 for host in ALLOWED_HOSTS:
-    if host not in ['localhost', '127.0.0.1']:
-        CSRF_TRUSTED_ORIGINS.append(f'https://{host}')
+    if host not in ["localhost", "127.0.0.1"]:
+        CSRF_TRUSTED_ORIGINS.append(f"https://{host}")
 
 # Application definition
 
 INSTALLED_APPS = [
-    'daphne',
-    'django.contrib.admin',
-    'django.contrib.auth',
-    'django.contrib.contenttypes',
-    'django.contrib.sessions',
-    'django.contrib.messages',
-    'django.contrib.staticfiles',
-    'channels',
-    'corsheaders',
-    'rest_framework',
-    'django_celery_results',
-    'celery_progress',
-    'api',
-    'video_processor',
-    'topic',
-    'query_processor',
+    "daphne",
+    "django.contrib.admin",
+    "django.contrib.auth",
+    "django.contrib.contenttypes",
+    "django.contrib.sessions",
+    "django.contrib.messages",
+    "django.contrib.staticfiles",
+    "channels",
+    "corsheaders",
+    "rest_framework",
+    "django_celery_results",
+    "celery_progress",
+    "api",
+    "video_processor",
+    "topic",
+    "query_processor",
 ]
 
 MIDDLEWARE = [
-    'corsheaders.middleware.CorsMiddleware',
-    'django.middleware.security.SecurityMiddleware',
-    'django.contrib.sessions.middleware.SessionMiddleware',
-    'django.middleware.common.CommonMiddleware',
-    'django.middleware.csrf.CsrfViewMiddleware',
-    'django.contrib.auth.middleware.AuthenticationMiddleware',
-    'django.contrib.messages.middleware.MessageMiddleware',
-    'django.middleware.clickjacking.XFrameOptionsMiddleware',
+    "corsheaders.middleware.CorsMiddleware",
+    "django.middleware.security.SecurityMiddleware",
+    "django.contrib.sessions.middleware.SessionMiddleware",
+    "django.middleware.common.CommonMiddleware",
+    "django.middleware.csrf.CsrfViewMiddleware",
+    "django.contrib.auth.middleware.AuthenticationMiddleware",
+    "django.contrib.messages.middleware.MessageMiddleware",
+    "django.middleware.clickjacking.XFrameOptionsMiddleware",
 ]
 
-ROOT_URLCONF = 'yt_summariser.urls'
+ROOT_URLCONF = "yt_summariser.urls"
 
 TEMPLATES = [
     {
-        'BACKEND': 'django.template.backends.django.DjangoTemplates',
-        'DIRS': [],
-        'APP_DIRS': True,
-        'OPTIONS': {
-            'context_processors': [
-                'django.template.context_processors.debug',
-                'django.template.context_processors.request',
-                'django.contrib.auth.context_processors.auth',
-                'django.contrib.messages.context_processors.messages',
+        "BACKEND": "django.template.backends.django.DjangoTemplates",
+        "DIRS": [],
+        "APP_DIRS": True,
+        "OPTIONS": {
+            "context_processors": [
+                "django.template.context_processors.debug",
+                "django.template.context_processors.request",
+                "django.contrib.auth.context_processors.auth",
+                "django.contrib.messages.context_processors.messages",
             ],
         },
     },
 ]
 
-WSGI_APPLICATION = 'yt_summariser.wsgi.application'
-ASGI_APPLICATION = 'yt_summariser.asgi.application'
+WSGI_APPLICATION = "yt_summariser.wsgi.application"
+ASGI_APPLICATION = "yt_summariser.asgi.application"
 
 
 # Database
@@ -105,10 +110,10 @@ ASGI_APPLICATION = 'yt_summariser.asgi.application'
 import dj_database_url
 
 # Database configuration - use DATABASE_URL if available (for Supabase/Render)
-if 'DATABASE_URL' in os.environ:
+if "DATABASE_URL" in os.environ:
     DATABASES = {
-        'default': dj_database_url.parse(
-            os.environ.get('DATABASE_URL'),
+        "default": dj_database_url.parse(
+            os.environ.get("DATABASE_URL"),
             conn_max_age=600,
             conn_health_checks=True,
         )
@@ -116,15 +121,15 @@ if 'DATABASE_URL' in os.environ:
 else:
     # Fallback to individual environment variables (for local development)
     DATABASES = {
-        'default': {
-            'ENGINE': 'django.db.backends.postgresql',
-            'NAME': os.getenv('DB_NAME', 'yt_summariser'),
-            'USER': os.getenv('DB_USER', 'sanjays'),
-            'PASSWORD': os.getenv('DB_PASSWORD', ''),
-            'HOST': os.getenv('DB_HOST', 'localhost'),
-            'PORT': os.getenv('DB_PORT', '5432'),
-            'OPTIONS': {
-                'connect_timeout': 20,
+        "default": {
+            "ENGINE": "django.db.backends.postgresql",
+            "NAME": os.getenv("DB_NAME", "yt_summariser"),
+            "USER": os.getenv("DB_USER", "sanjays"),
+            "PASSWORD": os.getenv("DB_PASSWORD", ""),
+            "HOST": os.getenv("DB_HOST", "localhost"),
+            "PORT": os.getenv("DB_PORT", "5432"),
+            "OPTIONS": {
+                "connect_timeout": 20,
             },
         }
     }
@@ -135,16 +140,16 @@ else:
 
 AUTH_PASSWORD_VALIDATORS = [
     {
-        'NAME': 'django.contrib.auth.password_validation.UserAttributeSimilarityValidator',
+        "NAME": "django.contrib.auth.password_validation.UserAttributeSimilarityValidator",
     },
     {
-        'NAME': 'django.contrib.auth.password_validation.MinimumLengthValidator',
+        "NAME": "django.contrib.auth.password_validation.MinimumLengthValidator",
     },
     {
-        'NAME': 'django.contrib.auth.password_validation.CommonPasswordValidator',
+        "NAME": "django.contrib.auth.password_validation.CommonPasswordValidator",
     },
     {
-        'NAME': 'django.contrib.auth.password_validation.NumericPasswordValidator',
+        "NAME": "django.contrib.auth.password_validation.NumericPasswordValidator",
     },
 ]
 
@@ -152,9 +157,9 @@ AUTH_PASSWORD_VALIDATORS = [
 # Internationalization
 # https://docs.djangoproject.com/en/5.2/topics/i18n/
 
-LANGUAGE_CODE = 'en-us'
+LANGUAGE_CODE = "en-us"
 
-TIME_ZONE = 'UTC'
+TIME_ZONE = "UTC"
 
 USE_I18N = True
 
@@ -164,34 +169,37 @@ USE_TZ = True
 # Static files (CSS, JavaScript, Images)
 # https://docs.djangoproject.com/en/5.2/howto/static-files/
 
-STATIC_URL = '/static/'
-STATIC_ROOT = os.path.join(BASE_DIR, 'staticfiles')
+STATIC_URL = "/static/"
+STATIC_ROOT = os.path.join(BASE_DIR, "staticfiles")
 
 # Static files storage for production
-STATICFILES_STORAGE = 'django.contrib.staticfiles.storage.StaticFilesStorage'
+STATICFILES_STORAGE = "django.contrib.staticfiles.storage.StaticFilesStorage"
 
 # Default primary key field type
 # https://docs.djangoproject.com/en/5.2/ref/settings/#default-auto-field
 
-DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
+DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
 # Redis Configuration
-REDIS_URL = os.getenv('REDIS_URL', 'redis://localhost:6379')
+REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379")
 
 # Parse Redis URL to extract host and port for configurations that need them separately
 from urllib.parse import urlparse
+
 redis_parsed = urlparse(REDIS_URL)
-REDIS_HOST = redis_parsed.hostname or 'localhost'
+REDIS_HOST = redis_parsed.hostname or "localhost"
 REDIS_PORT = redis_parsed.port or 6379
 REDIS_PASSWORD = redis_parsed.password
 
 # Celery Configuration
 CELERY_BROKER_URL = f"{REDIS_URL}/0"
-CELERY_RESULT_BACKEND = f"{REDIS_URL}/1"  # Use Redis for results to fix backend conflicts
-CELERY_CACHE_BACKEND = f"{REDIS_URL}/2"   # Use Redis for cache consistency
-CELERY_ACCEPT_CONTENT = ['json']
-CELERY_TASK_SERIALIZER = 'json'
-CELERY_RESULT_SERIALIZER = 'json'
+CELERY_RESULT_BACKEND = (
+    f"{REDIS_URL}/1"  # Use Redis for results to fix backend conflicts
+)
+CELERY_CACHE_BACKEND = f"{REDIS_URL}/2"  # Use Redis for cache consistency
+CELERY_ACCEPT_CONTENT = ["json"]
+CELERY_TASK_SERIALIZER = "json"
+CELERY_RESULT_SERIALIZER = "json"
 
 # Store task results for 7 days with extended information
 CELERY_RESULT_EXPIRES = 60 * 60 * 24 * 7  # 7 days
@@ -199,7 +207,9 @@ CELERY_RESULT_EXTENDED = True  # Store task name, args, kwargs, worker info
 
 # Enhanced Celery configuration for macOS stability and long-running tasks
 CELERY_WORKER_PREFETCH_MULTIPLIER = 1  # Process one task at a time
-CELERY_WORKER_MAX_TASKS_PER_CHILD = 10  # Restart workers after 10 tasks to prevent memory leaks
+CELERY_WORKER_MAX_TASKS_PER_CHILD = (
+    10  # Restart workers after 10 tasks to prevent memory leaks
+)
 CELERY_WORKER_MAX_MEMORY_PER_CHILD = 200000  # 200MB memory limit per worker
 CELERY_TASK_SOFT_TIME_LIMIT = 1800  # 30 minutes soft limit
 CELERY_TASK_TIME_LIMIT = 2100  # 35 minutes hard limit
@@ -215,8 +225,8 @@ CELERY_WORKER_DISABLE_RATE_LIMITS = True  # Disable rate limiting for long tasks
 # CELERY_WORKER_CONCURRENCY = 1  # Single task per worker
 # Use start_celery_parallel.sh to run multiple worker processes
 
-# Option B: Single worker with thread concurrency  
-CELERY_WORKER_POOL = 'threads'  # Use thread pool for concurrency
+# Option B: Single worker with thread concurrency
+CELERY_WORKER_POOL = "threads"  # Use thread pool for concurrency
 CELERY_WORKER_CONCURRENCY = 4  # Allow 4 concurrent tasks
 CELERY_BROKER_CONNECTION_RETRY_ON_STARTUP = True
 CELERY_BROKER_CONNECTION_RETRY = True
@@ -237,24 +247,26 @@ CORS_ALLOW_CREDENTIALS = True
 
 # Allow these headers for SSE
 CORS_ALLOW_HEADERS = [
-    'accept',
-    'accept-encoding',
-    'authorization',
-    'content-type',
-    'dnt',
-    'origin',
-    'user-agent',
-    'x-csrftoken',
-    'x-requested-with',
-    'cache-control',
+    "accept",
+    "accept-encoding",
+    "authorization",
+    "content-type",
+    "dnt",
+    "origin",
+    "user-agent",
+    "x-csrftoken",
+    "x-requested-with",
+    "cache-control",
 ]
 
 # Channels Configuration
 CHANNEL_LAYERS = {
-    'default': {
-        'BACKEND': 'channels_redis.core.RedisChannelLayer',
-        'CONFIG': {
-            "hosts": [(REDIS_HOST, REDIS_PORT)] if not REDIS_PASSWORD else [f"redis://:{REDIS_PASSWORD}@{REDIS_HOST}:{REDIS_PORT}"],
+    "default": {
+        "BACKEND": "channels_redis.core.RedisChannelLayer",
+        "CONFIG": {
+            "hosts": [(REDIS_HOST, REDIS_PORT)]
+            if not REDIS_PASSWORD
+            else [f"redis://:{REDIS_PASSWORD}@{REDIS_HOST}:{REDIS_PORT}"],
         },
     },
 }
@@ -264,42 +276,47 @@ CHANNEL_LAYERS = {
 # ============================================================================
 
 # OpenAI Configuration
-OPENAI_API_KEY = os.getenv('OPENAI_API_KEY')
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 OPENAI_CONFIG = {
-    'model': os.getenv('OPENAI_EMBEDDING_MODEL', 'text-embedding-3-large'),
-    'max_tokens': int(os.getenv('OPENAI_MAX_TOKENS', '8191')),
-    'timeout': int(os.getenv('OPENAI_TIMEOUT', '30')),
-    'max_retries': int(os.getenv('OPENAI_MAX_RETRIES', '3')),
-    'batch_size': int(os.getenv('OPENAI_BATCH_SIZE', '100')),
+    "model": os.getenv("OPENAI_EMBEDDING_MODEL", "text-embedding-3-large"),
+    "max_tokens": int(os.getenv("OPENAI_MAX_TOKENS", "8191")),
+    "timeout": int(os.getenv("OPENAI_TIMEOUT", "30")),
+    "max_retries": int(os.getenv("OPENAI_MAX_RETRIES", "3")),
+    "batch_size": int(os.getenv("OPENAI_BATCH_SIZE", "100")),
 }
 
 # Pinecone Configuration
 PINECONE_CONFIG = {
-    'api_key': os.getenv('PINECONE_API_KEY'),
-    'environment': os.getenv('PINECONE_ENVIRONMENT', 'aws-starter'),
-    'index_name': os.getenv('PINECONE_INDEX_NAME', 'youtube-transcripts'),
-    'dimension': int(os.getenv('PINECONE_DIMENSION', '3072')),  # text-embedding-3-large dimension
-    'metric': os.getenv('PINECONE_METRIC', 'cosine'),
-    'cloud': os.getenv('PINECONE_CLOUD', 'aws'),
-    'region': os.getenv('PINECONE_REGION', 'us-east-1'),
-    'timeout': int(os.getenv('PINECONE_TIMEOUT', '30')),
-    'max_retries': int(os.getenv('PINECONE_MAX_RETRIES', '3')),
+    "api_key": os.getenv("PINECONE_API_KEY"),
+    "environment": os.getenv("PINECONE_ENVIRONMENT", "aws-starter"),
+    "index_name": os.getenv("PINECONE_INDEX_NAME", "youtube-transcripts"),
+    "dimension": int(
+        os.getenv("PINECONE_DIMENSION", "3072")
+    ),  # text-embedding-3-large dimension
+    "metric": os.getenv("PINECONE_METRIC", "cosine"),
+    "cloud": os.getenv("PINECONE_CLOUD", "aws"),
+    "region": os.getenv("PINECONE_REGION", "us-east-1"),
+    "timeout": int(os.getenv("PINECONE_TIMEOUT", "30")),
+    "max_retries": int(os.getenv("PINECONE_MAX_RETRIES", "3")),
 }
 
 # Embedding Processing Configuration
 EMBEDDING_CONFIG = {
-    'chunk_size': int(os.getenv('EMBEDDING_CHUNK_SIZE', '512')),
-    'chunk_overlap': int(os.getenv('EMBEDDING_CHUNK_OVERLAP', '50')),
-    'batch_size': int(os.getenv('EMBEDDING_BATCH_SIZE', '100')),
-    'max_workers': int(os.getenv('EMBEDDING_MAX_WORKERS', '4')),
+    "chunk_size": int(os.getenv("EMBEDDING_CHUNK_SIZE", "512")),
+    "chunk_overlap": int(os.getenv("EMBEDDING_CHUNK_OVERLAP", "50")),
+    "batch_size": int(os.getenv("EMBEDDING_BATCH_SIZE", "100")),
+    "max_workers": int(os.getenv("EMBEDDING_MAX_WORKERS", "4")),
 }
 
 # Search Configuration
 SEARCH_CONFIG = {
-    'enable_semantic_search': os.getenv('ENABLE_SEMANTIC_SEARCH', 'true').lower() == 'true',
-    'search_results_limit': int(os.getenv('SEARCH_RESULTS_LIMIT', '10')),
-    'similarity_threshold': float(os.getenv('SIMILARITY_THRESHOLD', '0.7')),
-    'timestamp_context_window': int(os.getenv('SEARCH_TIMESTAMP_CONTEXT', '30')),  # seconds
+    "enable_semantic_search": os.getenv("ENABLE_SEMANTIC_SEARCH", "true").lower()
+    == "true",
+    "search_results_limit": int(os.getenv("SEARCH_RESULTS_LIMIT", "10")),
+    "similarity_threshold": float(os.getenv("SIMILARITY_THRESHOLD", "0.7")),
+    "timestamp_context_window": int(
+        os.getenv("SEARCH_TIMESTAMP_CONTEXT", "30")
+    ),  # seconds
 }
 
 # ============================================================================
@@ -307,16 +324,18 @@ SEARCH_CONFIG = {
 # ============================================================================
 
 # Decodo API Configuration (replaces scrape.do and yt-dlp)
-DECODO_AUTH_TOKEN = os.getenv('DECODO_AUTH_TOKEN')
+DECODO_AUTH_TOKEN = os.getenv("DECODO_AUTH_TOKEN")
 
 # Validation - Check for required environment variables in production
 if not DEBUG:
     required_env_vars = {
-        'OPENAI_API_KEY': OPENAI_API_KEY,
-        'PINECONE_API_KEY': PINECONE_CONFIG['api_key'],
-        'DECODO_AUTH_TOKEN': DECODO_AUTH_TOKEN,
+        "OPENAI_API_KEY": OPENAI_API_KEY,
+        "PINECONE_API_KEY": PINECONE_CONFIG["api_key"],
+        "DECODO_AUTH_TOKEN": DECODO_AUTH_TOKEN,
     }
-    
+
     missing_vars = [var for var, value in required_env_vars.items() if not value]
     if missing_vars:
-        raise ValueError(f"Missing required environment variables: {', '.join(missing_vars)}")
+        raise ValueError(
+            f"Missing required environment variables: {', '.join(missing_vars)}"
+        )

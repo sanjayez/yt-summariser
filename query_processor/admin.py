@@ -1,5 +1,8 @@
 from django.contrib import admin
+
 from .models import QueryRequest
+
+
 @admin.register(QueryRequest)
 class QueryRequestAdmin(admin.ModelAdmin):
     list_display = ("search_id", "request_type", "status", "total_videos", "created_at")

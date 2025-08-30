@@ -41,9 +41,12 @@ dependencies = [
 
 [dependency-groups]
 dev = [
+    "django-stubs>=5.2.2",
+    "djangorestframework-stubs>=3.16.2",
+    "mypy>=1.17.1",
     "pre-commit>=4.3.0",
     "ruff>=0.12.11",
-    "ty>=0.0.1a19",
+    "types-requests>=2.32.4.20250809",
 ]
 
 # [project.scripts]
@@ -119,6 +122,56 @@ skip-magic-trailing-comma = false
 # Automatically detect the appropriate line ending.
 line-ending = "auto"
 
-# [tool.ty]
-# Ty configuration temporarily disabled - will be fixed in a future commit
-# when Ty's configuration format stabilizes
+[tool.mypy]
+python_version = "3.12"
+# Start with moderate strictness - can be increased over time
+check_untyped_defs = false
+disallow_any_generics = false
+disallow_incomplete_defs = false
+disallow_untyped_defs = false
+no_implicit_optional = false
+warn_redundant_casts = true
+warn_unused_ignores = false  # Too noisy initially
+warn_return_any = false
+strict_optional = false
+
+# Focus on actual errors, not missing annotations initially
+warn_no_return = true
+warn_unreachable = true
+
+# Django-specific settings
+plugins = ["mypy_django_plugin.main"]
+
+# Exclude directories
+exclude = [
+    "migrations/",
+    "venv/",
+    ".venv/",
+    "build/",
+    "dist/",
+    "debug_logs/",
+    "logs/",
+]
+
+[[tool.mypy.overrides]]
+module = "*.migrations.*"
+ignore_errors = true
+
+[[tool.mypy.overrides]]
+module = [
+    "celery.*",
+    "scrapetube.*",
+    "yt_dlp.*",
+    "youtube_search_python.*",
+    "pinecone.*",
+    "weaviate.*",
+    "llama_index.*",
+    "channels.*",
+    "daphne.*",
+    "bleach.*",
+    "fast_langdetect.*",
+]
+ignore_missing_imports = true
+
+[tool.django-stubs]
+django_settings_module = "yt_summariser.settings"

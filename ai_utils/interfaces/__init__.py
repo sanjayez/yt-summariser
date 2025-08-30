@@ -4,11 +4,7 @@ These interfaces define contracts for different AI operations.
 """
 
 from .embeddings import EmbeddingProvider
-from .vector_store import VectorStoreProvider
 from .llm import LLMProvider
+from .vector_store import VectorStoreProvider
 
-__all__ = [
-    "EmbeddingProvider",
-    "VectorStoreProvider", 
-    "LLMProvider"
-] 
+__all__ = ["EmbeddingProvider", "VectorStoreProvider", "LLMProvider"]

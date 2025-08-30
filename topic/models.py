@@ -1,69 +1,88 @@
 import uuid
+
 from django.db import models
 
 
 class SearchSession(models.Model):
     STATUS_CHOICES = [
-        ('processing', 'Processing'),
-        ('failed', 'Failed'),
-        ('success', 'Success'),
+        ("processing", "Processing"),
+        ("failed", "Failed"),
+        ("success", "Success"),
     ]
-    
+
     session_id = models.UUIDField(default=uuid.uuid4, editable=False, unique=True)
     user_ip = models.GenericIPAddressField()
-    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='processing')
+    status = models.CharField(
+        max_length=20, choices=STATUS_CHOICES, default="processing"
+    )
     created_at = models.DateTimeField(auto_now_add=True)
-    
+
     def __str__(self):
         return f"Session {str(self.session_id)[:8]}"
-    
+
     class Meta:
-        ordering = ['-created_at']
+        ordering = ["-created_at"]
         indexes = [
-            models.Index(fields=['session_id']),
-            models.Index(fields=['user_ip']),
-            models.Index(fields=['created_at']),
+            models.Index(fields=["session_id"]),
+            models.Index(fields=["user_ip"]),
+            models.Index(fields=["created_at"]),
         ]
 
 
 class SearchRequest(models.Model):
     STATUS_CHOICES = [
-        ('processing', 'Processing'),
-        ('failed', 'Failed'),
-        ('success', 'Success'),
+        ("processing", "Processing"),
+        ("failed", "Failed"),
+        ("success", "Success"),
     ]
-    
+
     INTENT_CHOICES = [
-        ('LOOKUP', 'Lookup'),
-        ('TUTORIAL', 'Tutorial'),
-        ('HOW_TO', 'How To'),
-        ('REVIEW', 'Review'),
+        ("LOOKUP", "Lookup"),
+        ("TUTORIAL", "Tutorial"),
+        ("HOW_TO", "How To"),
+        ("REVIEW", "Review"),
     ]
-    
+
     search_id = models.UUIDField(default=uuid.uuid4, editable=False, unique=True)
-    search_session = models.ForeignKey(SearchSession, on_delete=models.CASCADE, related_name='search_requests')
-    original_query = models.TextField(help_text="User's original query")
-    concepts = models.JSONField(default=list, blank=True, help_text="List of concepts identified by LLM from the user query")
-    enhanced_queries = models.JSONField(default=list, blank=True, help_text="List of LLM-generated enhanced queries for search execution")
-    intent_type = models.CharField(
-        max_length=20, 
-        choices=INTENT_CHOICES, 
-        blank=True,
-        help_text="Primary intent of the user query"
+    search_session = models.ForeignKey(
+        SearchSession, on_delete=models.CASCADE, related_name="search_requests"
     )
-    video_urls = models.JSONField(default=list, blank=True, help_text="List of YouTube video URLs found")
+    original_query = models.TextField(help_text="User's original query")
+    concepts = models.JSONField(
+        default=list,
+        blank=True,
+        help_text="List of concepts identified by LLM from the user query",
+    )
+    enhanced_queries = models.JSONField(
+        default=list,
+        blank=True,
+        help_text="List of LLM-generated enhanced queries for search execution",
+    )
+    intent_type = models.CharField(
+        max_length=20,
+        choices=INTENT_CHOICES,
+        blank=True,
+        help_text="Primary intent of the user query",
+    )
+    video_urls = models.JSONField(
+        default=list, blank=True, help_text="List of YouTube video URLs found"
+    )
     total_videos = models.IntegerField(default=0)
-    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='processing')
-    error_message = models.TextField(blank=True, help_text="Error details if status is failed")
+    status = models.CharField(
+        max_length=20, choices=STATUS_CHOICES, default="processing"
+    )
+    error_message = models.TextField(
+        blank=True, help_text="Error details if status is failed"
+    )
     created_at = models.DateTimeField(auto_now_add=True)
-    
+
     def __str__(self):
         return f"Search {str(self.search_id)[:8]} - {self.original_query[:50]}"
-    
+
     class Meta:
-        ordering = ['-created_at']
+        ordering = ["-created_at"]
         indexes = [
-            models.Index(fields=['search_id']),
-            models.Index(fields=['search_session', 'created_at']),
-            models.Index(fields=['status']),
+            models.Index(fields=["search_id"]),
+            models.Index(fields=["search_session", "created_at"]),
+            models.Index(fields=["status"]),
         ]
