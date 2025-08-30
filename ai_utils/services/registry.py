@@ -5,16 +5,14 @@ Provides per-process singletons for LLM services to avoid cold starts and
 unnecessary client re-instantiation across tasks.
 """
 
-from typing import Optional
-
 from ..config import get_config
 from ..providers.gemini_llm import GeminiLLMProvider
 from ..providers.weaviate_store import WeaviateVectorStoreProvider
 from .llm_service import LLMService
 from .vector_service import VectorService
 
-_gemini_llm_service: Optional[LLMService] = None
-_vector_service: Optional[VectorService] = None
+_gemini_llm_service: LLMService | None = None
+_vector_service: VectorService | None = None
 
 
 def get_gemini_llm_service() -> LLMService:
@@ -54,12 +52,14 @@ async def warmup_vector_store() -> bool:
         health = await service.health_check()
         # Perform a minimal search to load vectorizer/collection paths
         from ..models import VectorQuery
+
         try:
-            await service.search_similar(VectorQuery(query="hello", embedding=None, top_k=1, filters=None))
+            await service.search_similar(
+                VectorQuery(query="hello", embedding=None, top_k=1, filters=None)
+            )
         except Exception:
             # Search may fail if empty collection; that's fine for warmup
             pass
         return health.get("status") == "healthy"
     except Exception:
         return False
-

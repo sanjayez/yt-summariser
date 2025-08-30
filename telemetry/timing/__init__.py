@@ -16,16 +16,14 @@ All functionality is re-exported here to maintain backward compatibility.
 """
 
 # Import all functionality from focused modules
-from .decorators import (
-    timed_operation,
-    measure_time,
-)
-
 from .context_managers import (
     TimingContext,
     async_timing_context,
 )
-
+from .decorators import (
+    measure_time,
+    timed_operation,
+)
 from .performance_timer import (
     PerformanceTimer,
 )
@@ -33,7 +31,7 @@ from .performance_timer import (
 # Convenience exports for common use cases - maintaining original API
 __all__ = [
     "timed_operation",
-    "TimingContext", 
+    "TimingContext",
     "async_timing_context",
     "measure_time",
     "PerformanceTimer",

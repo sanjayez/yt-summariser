@@ -2,15 +2,20 @@ from django.apps import AppConfig
 
 
 class ApiConfig(AppConfig):
-    default_auto_field = 'django.db.models.BigAutoField'
-    name = 'api'
+    default_auto_field = "django.db.models.BigAutoField"
+    name = "api"
 
     def ready(self):
         # Non-blocking Gemini warmup on Django app start (best-effort)
         try:
-            import threading
             import asyncio
-            from ai_utils.services.registry import warmup_gemini_llm, warmup_vector_store
+            import threading
+
+            from ai_utils.services.registry import (
+                warmup_gemini_llm,
+                warmup_vector_store,
+            )
+
             from .services.service_container import get_service_container
 
             def _warm():

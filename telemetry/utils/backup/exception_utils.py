@@ -17,4 +17,3 @@ Please update imports to use 'from core.exceptions import ...' instead.
 from core.exceptions import *
 
 # Re-export the __all__ for backward compatibility
-from core.exceptions import __all__

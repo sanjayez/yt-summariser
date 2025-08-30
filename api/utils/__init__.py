@@ -2,4 +2,3 @@
 # Performance tracking moved to telemetry.timing module
 
 __all__ = []
-

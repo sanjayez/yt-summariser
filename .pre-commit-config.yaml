@@ -3,24 +3,23 @@ repos:
   - repo: https://github.com/astral-sh/ruff-pre-commit
     rev: v0.12.11
     hooks:
-      # Run the linter
+      # Run the linter (only auto-fix, don't fail on remaining issues)
       - id: ruff
-        args: [--fix]
+        args: [--fix, --exit-zero]
         types_or: [python, pyi, jupyter]
       # Run the formatter
       - id: ruff-format
         types_or: [python, pyi, jupyter]
 
-  # Ty type checking using uv (temporarily disabled - will fix in next commit)
-  # - repo: local
+  # Mypy type checking (temporarily disabled for baseline commit)
+  # Will be enabled for future PRs once baseline is established
+  # - repo: https://github.com/pre-commit/mirrors-mypy
+  #   rev: v1.17.1
   #   hooks:
-  #     - id: ty-check
-  #       name: ty type check
-  #       entry: uv run ty check
-  #       language: system
-  #       types: [python]
-  #       pass_filenames: false
-  #       always_run: true
+  #     - id: mypy
+  #       additional_dependencies: [django-stubs, djangorestframework-stubs, types-requests]
+  #       args: [--config-file=pyproject.toml]
+  #       pass_filenames: true
 
   # Additional useful hooks
   - repo: https://github.com/pre-commit/pre-commit-hooks

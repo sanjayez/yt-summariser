@@ -14,16 +14,17 @@ Including another URLconf
     1. Import the include() function: from django.urls import include, path
     2. Add a URL to urlpatterns:  path('blog/', include('blog.urls'))
 """
-from django.contrib import admin
-from django.urls import path, include
+
 from django.conf import settings
+from django.contrib import admin
 from django.contrib.staticfiles.urls import staticfiles_urlpatterns
+from django.urls import include, path
 
 urlpatterns = [
-    path('admin/', admin.site.urls),
-    path('api/', include('api.urls')),
-    path('video/', include('video_processor.urls')),
-    path('api/topic/', include('topic.urls')),
+    path("admin/", admin.site.urls),
+    path("api/", include("api.urls")),
+    path("video/", include("video_processor.urls")),
+    path("api/topic/", include("topic.urls")),
 ]
 
 # Serve static files in development
