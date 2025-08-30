@@ -63,13 +63,13 @@ case $MODE in
     "development")
         echo "   Using: Daphne (development server)"
         echo ""
-        exec daphne -b "$HOST" -p "$PORT" yt_summariser.asgi:application
+        exec uv run daphne -b "$HOST" -p "$PORT" yt_summariser.asgi:application
         ;;
     "production")
         echo "   Using: Gunicorn with Uvicorn workers"
         echo "   Workers: $WORKERS"
         echo ""
-        exec gunicorn yt_summariser.asgi:application \
+        exec uv run gunicorn yt_summariser.asgi:application \
             -k uvicorn.workers.UvicornWorker \
             -w "$WORKERS" \
             -b "$HOST:$PORT" \

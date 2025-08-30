@@ -53,7 +53,7 @@ echo "🎬 Starting $WORKER_COUNT Celery workers for parallel processing..."
 # Start multiple workers in background
 for i in $(seq 1 $WORKER_COUNT); do
     echo "Starting worker $i..."
-    celery -A yt_summariser worker \
+    uv run celery -A yt_summariser worker \
         --loglevel=info \
         --hostname=worker$i@%h \
         --concurrency=4 \
@@ -65,7 +65,7 @@ for i in $(seq 1 $WORKER_COUNT); do
         --detach \
         --pidfile=/tmp/celery_worker$i.pid \
         --logfile=/tmp/celery_worker$i.log
-    
+
     sleep 1  # Small delay between worker starts
 done
 
@@ -74,12 +74,12 @@ echo "✅ Started $WORKER_COUNT parallel Celery workers"
 # Start Flower monitoring if requested
 if [ "$START_FLOWER" = "yes" ]; then
     echo "🌸 Starting Celery Flower monitoring..."
-    
+
     # Check if this is likely a production environment
     if [ -n "$DJANGO_ENV" ] && [ "$DJANGO_ENV" = "production" ]; then
         # Production Flower with authentication and persistence
         echo "🔒 Starting Flower in PRODUCTION mode with authentication..."
-        celery -A yt_summariser flower \
+        uv run celery -A yt_summariser flower \
             --port=$FLOWER_PORT \
             --address=127.0.0.1 \
             --max_tasks=10000 \
@@ -93,7 +93,7 @@ if [ "$START_FLOWER" = "yes" ]; then
     else
         # Development Flower - more open and verbose
         echo "🛠️ Starting Flower in DEVELOPMENT mode..."
-        celery -A yt_summariser flower \
+        uv run celery -A yt_summariser flower \
             --port=$FLOWER_PORT \
             --address=127.0.0.1 \
             --max_tasks=5000 \
@@ -104,10 +104,10 @@ if [ "$START_FLOWER" = "yes" ]; then
             --pidfile=/tmp/flower.pid \
             --logfile=/tmp/flower.log
     fi
-    
+
     # Wait a moment for Flower to start
     sleep 3
-    
+
     # Check if Flower started successfully
     if curl -s http://localhost:$FLOWER_PORT > /dev/null 2>&1; then
         echo "✅ Flower started successfully!"
@@ -123,7 +123,7 @@ else
 fi
 
 echo ""
-echo "📊 Monitor workers with: celery -A yt_summariser inspect active"
+echo "📊 Monitor workers with: uv run celery -A yt_summariser inspect active"
 echo "📋 Stop all with: pkill -f 'celery.*worker'; pkill -f 'celery.*flower'"
 echo "📄 Worker logs: /tmp/celery_worker*.log"
 if [ "$START_FLOWER" = "yes" ]; then
