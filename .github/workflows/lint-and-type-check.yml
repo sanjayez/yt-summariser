@@ -25,24 +25,49 @@ jobs:
     - name: Install dependencies
       run: uv sync --all-extras --dev
 
-    - name: Run Ruff linting (informational - establishing baseline)
-      continue-on-error: true
-      run: |
-        echo "🔍 Running Ruff linter..."
-        echo "📊 Current code quality status:"
-        uv run ruff check . --statistics
+    - name: Get changed files (using GitHub Actions)
+      id: changed-files
+      uses: tj-actions/changed-files@v41
+      with:
+        files: '**/*.py'
 
-    - name: Run Ruff formatting check (informational - establishing baseline)
-      continue-on-error: true
+    - name: Run Ruff linting on changed files (STRICT)
+      if: steps.changed-files.outputs.any_changed == 'true'
       run: |
-        echo "🎨 Checking Ruff formatting..."
-        uv run ruff format --check .
+        echo "🔍 Running strict Ruff linter on changed files..."
+        echo "Changed files: ${{ steps.changed-files.outputs.all_changed_files }}"
+        uv run ruff check --force-exclude ${{ steps.changed-files.outputs.all_changed_files }} --output-format=github
 
-    - name: Run Mypy type checking (informational - establishing baseline)
+    - name: Run Ruff formatting check on changed files (STRICT)
+      if: steps.changed-files.outputs.any_changed == 'true'
+      run: |
+        echo "🎨 Checking Ruff formatting on changed files..."
+        uv run ruff format --check --force-exclude ${{ steps.changed-files.outputs.all_changed_files }}
+
+    - name: Run Mypy type checking on changed files (STRICT)
+      if: steps.changed-files.outputs.any_changed == 'true'
+      env:
+        DJANGO_SETTINGS_MODULE: yt_summariser.mypy_settings
+      run: |
+        echo "🔧 Running strict Mypy type checker on changed files..."
+        echo "Changed files: ${{ steps.changed-files.outputs.all_changed_files }}"
+        echo "Using Django settings: $DJANGO_SETTINGS_MODULE"
+        uv run mypy ${{ steps.changed-files.outputs.all_changed_files }}
+
+    - name: No Python files changed
+      if: steps.changed-files.outputs.any_changed == 'false'
+      run: |
+        echo "ℹ️ No Python files changed in this PR/push"
+        echo "Skipping strict quality checks"
+
+    - name: Full codebase quality metrics (informational)
       continue-on-error: true
       run: |
-        echo "🔧 Running Mypy type checker..."
-        uv run mypy . --show-error-codes --no-error-summary | head -20
+        echo "📊 Full codebase quality metrics:"
+        echo "Ruff issues remaining:"
+        uv run ruff check . --statistics || true
+        echo "Mypy baseline status:"
+        uv run mypy . --show-error-codes --no-error-summary | head -10 || true
 
     - name: Generate summary
       if: always()

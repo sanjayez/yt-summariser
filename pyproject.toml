@@ -160,6 +160,7 @@ ignore_errors = true
 [[tool.mypy.overrides]]
 module = [
     "celery.*",
+    "celery_progress.*",
     "scrapetube.*",
     "yt_dlp.*",
     "youtube_search_python.*",
@@ -174,4 +175,4 @@ module = [
 ignore_missing_imports = true
 
 [tool.django-stubs]
-django_settings_module = "yt_summariser.settings"
+django_settings_module = "yt_summariser.mypy_settings"

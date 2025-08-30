@@ -3,23 +3,24 @@ repos:
   - repo: https://github.com/astral-sh/ruff-pre-commit
     rev: v0.12.11
     hooks:
-      # Run the linter (only auto-fix, don't fail on remaining issues)
+      # Run the linter (strict mode - will fail on quality issues)
       - id: ruff
-        args: [--fix, --exit-zero]
+        args: [--fix, --force-exclude]
         types_or: [python, pyi, jupyter]
       # Run the formatter
       - id: ruff-format
         types_or: [python, pyi, jupyter]
 
-  # Mypy type checking (temporarily disabled for baseline commit)
-  # Will be enabled for future PRs once baseline is established
-  # - repo: https://github.com/pre-commit/mirrors-mypy
-  #   rev: v1.17.1
-  #   hooks:
-  #     - id: mypy
-  #       additional_dependencies: [django-stubs, djangorestframework-stubs, types-requests]
-  #       args: [--config-file=pyproject.toml]
-  #       pass_filenames: true
+  # Mypy type checking using local uv environment
+  - repo: local
+    hooks:
+      - id: mypy-local
+        name: mypy (local environment)
+        entry: bash -c 'DJANGO_SETTINGS_MODULE=yt_summariser.mypy_settings uv run mypy "$@"' --
+        language: system
+        types: [python]
+        args: [--config-file=pyproject.toml, --follow-imports=silent]
+        pass_filenames: true
 
   # Additional useful hooks
   - repo: https://github.com/pre-commit/pre-commit-hooks
