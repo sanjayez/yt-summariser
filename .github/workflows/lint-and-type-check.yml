@@ -25,27 +25,36 @@ jobs:
     - name: Install dependencies
       run: uv sync --all-extras --dev
 
-    - name: Debug and run quality checks
+    - name: Get changed files (using GitHub Actions)
+      id: changed-files
+      uses: tj-actions/changed-files@v41
+      with:
+        files: '**/*.py'
+
+    - name: Run Ruff linting on changed files (STRICT)
+      if: steps.changed-files.outputs.any_changed == 'true'
       run: |
-        echo "🔍 Debugging file detection..."
-        echo "Event: ${{ github.event_name }}"
-        echo "Base ref: ${{ github.base_ref }}"
-        echo "Head ref: ${{ github.head_ref }}"
+        echo "🔍 Running strict Ruff linter on changed files..."
+        echo "Changed files: ${{ steps.changed-files.outputs.all_changed_files }}"
+        uv run ruff check ${{ steps.changed-files.outputs.all_changed_files }} --output-format=github
 
-        # Show recent commits for debugging
-        echo "📋 Recent commits:"
-        git log --oneline -5
+    - name: Run Ruff formatting check on changed files (STRICT)
+      if: steps.changed-files.outputs.any_changed == 'true'
+      run: |
+        echo "🎨 Checking Ruff formatting on changed files..."
+        uv run ruff format --check ${{ steps.changed-files.outputs.all_changed_files }}
 
-        # Show all Python files changed in recent commits
-        echo "🔍 All Python files in last 3 commits:"
-        git diff --name-only HEAD~3 HEAD -- '*.py' | head -10
+    - name: Run Mypy type checking on changed files (STRICT)
+      if: steps.changed-files.outputs.any_changed == 'true'
+      run: |
+        echo "🔧 Running strict Mypy type checker on changed files..."
+        uv run mypy ${{ steps.changed-files.outputs.all_changed_files }}
 
-        # For now, run quality checks on all files but allow failures
-        echo "📊 Running quality checks (informational):"
-        uv run ruff check . --statistics || true
-
-        echo "🎨 Checking if any files need formatting:"
-        uv run ruff format --check . --diff || true
+    - name: No Python files changed
+      if: steps.changed-files.outputs.any_changed == 'false'
+      run: |
+        echo "ℹ️ No Python files changed in this PR/push"
+        echo "Skipping strict quality checks"
 
     - name: Full codebase quality metrics (informational)
       continue-on-error: true
