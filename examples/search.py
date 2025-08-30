@@ -49,7 +49,7 @@ def demo_scrapetube_provider():
 
     # Perform a search
     search_query = "python programming tutorial"
-    print(f"\nSearching for: '{search_query}' (with English-only and shorts filtering)")
+    print(f"\nSearching for: '{search_query}' (with English-only)")
 
     try:
         # Simple search
@@ -87,7 +87,7 @@ def demo_filtering_comparison():
 
     # Provider with filtering
     provider_filtered = ScrapeTubeProvider(
-        max_results=5, filter_shorts=True, english_only=True, min_duration_seconds=60
+        max_results=5, filter_shorts=True, english_only=True
     )
 
     search_query = "tutorial"
