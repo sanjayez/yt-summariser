@@ -25,6 +25,7 @@ def run_tests():
     test_runner = TestRunner()
 
     test_files = glob.glob("tests/test_*.py")
+    api_test_files = glob.glob("api/tests/test_*.py")
 
     # Exclude problematic test files
     excluded_tests = [
@@ -32,7 +33,8 @@ def run_tests():
     ]
 
     test_files = [f for f in test_files if f not in excluded_tests]
-    test_modules = [f.replace("/", ".").replace(".py", "") for f in test_files]
+    all_test_files = test_files + api_test_files
+    test_modules = [f.replace("/", ".").replace(".py", "") for f in all_test_files]
 
     # Run specific test modules
     # test_modules = [
@@ -43,6 +45,8 @@ def run_tests():
     # ]
 
     print("🧪 Running Unified Session Management Tests")
+    print("=" * 50)
+    print(f"📝 Found {len(test_files)} core tests and {len(api_test_files)} API tests")
     print("=" * 50)
 
     # Run tests

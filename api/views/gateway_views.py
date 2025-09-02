@@ -1,6 +1,5 @@
 """
-Unified gateway views for session management and request routing.
-Provides a single entry point for all processing requests with rate limiting.
+Unified gateway views for session management with rate limiting
 """
 
 from pydantic import ValidationError
@@ -11,6 +10,7 @@ from rest_framework.views import APIView
 
 from api.schemas import UnifiedProcessRequest, UnifiedProcessResponse
 from api.services.session_service import SessionService
+from api.utils.error_messages import get_friendly_error_message
 from telemetry.logging import get_logger
 
 logger = get_logger(__name__)
@@ -25,15 +25,11 @@ class UnifiedGatewayView(APIView):
     # TODO: Add OpenAPI documentation when drf_spectacular is available
     def post(self, request):
         """
-        Handle unified processing requests with session management.
-
         This endpoint:
         1. Validates the request data
         2. Creates or retrieves a session
         3. Checks rate limits (3 requests per day per session)
         4. Returns session info and processing status
-
-        Future versions will route to actual processors.
         """
         try:
             # Use Pydantic schema for validation
@@ -43,17 +39,23 @@ class UnifiedGatewayView(APIView):
                 request_type = validated_request.type
             except ValidationError as e:
                 logger.warning(f"Request validation failed: {e}")
+                friendly_message = get_friendly_error_message(e)
+                unified_response = UnifiedProcessResponse(
+                    status="error",
+                    message=friendly_message,
+                )
                 return Response(
-                    {
-                        "error": "Invalid request data",
-                        "message": "Please check your request format",
-                    },
+                    unified_response.model_dump(exclude_none=True),
                     status=status.HTTP_400_BAD_REQUEST,
                 )
             except (ParseError, ValueError) as e:
                 logger.warning(f"JSON parse error: {e}")
+                unified_response = UnifiedProcessResponse(
+                    status="error",
+                    message="Invalid JSON format",
+                )
                 return Response(
-                    {"error": "Invalid JSON data", "message": str(e)},
+                    unified_response.model_dump(exclude_none=True),
                     status=status.HTTP_400_BAD_REQUEST,
                 )
 
@@ -65,8 +67,12 @@ class UnifiedGatewayView(APIView):
 
             # Handle invalid session case
             if len(session_result) == 3 and session_result[2] == "invalid_session":
+                unified_response = UnifiedProcessResponse(
+                    status="error",
+                    message="Invalid session ID provided",
+                )
                 return Response(
-                    {"error": "Invalid session", "message": "Invalid session."},
+                    unified_response.model_dump(exclude_none=True),
                     status=status.HTTP_400_BAD_REQUEST,
                 )
 
@@ -81,27 +87,25 @@ class UnifiedGatewayView(APIView):
             if not allowed:
                 # Map service status to HTTP status
                 status_str = response_data.get("status", "error")
-                http_status = (
-                    status.HTTP_429_TOO_MANY_REQUESTS
-                    if status_str == "rate_limited"
-                    else status.HTTP_500_INTERNAL_SERVER_ERROR
-                )
-                # Add user-friendly message for rate limiting
+
                 if status_str == "rate_limited":
+                    unified_response = UnifiedProcessResponse(
+                        status="rate_limited",
+                        message="Daily limit reached. Try again tomorrow",
+                    )
                     return Response(
-                        {
-                            "status": "rate_limited",
-                            "remaining_limit": response_data["remaining_limit"],
-                            "message": "Daily limit reached. Try again tomorrow",
-                        },
-                        status=http_status,
+                        unified_response.model_dump(exclude_none=True),
+                        status=status.HTTP_429_TOO_MANY_REQUESTS,
                     )
                 else:
                     unified_response = UnifiedProcessResponse(
-                        status=status_str,
-                        remaining_limit=response_data["remaining_limit"],
+                        status="error",
+                        message="Rate limit check failed",
                     )
-                    return Response(unified_response.model_dump(), status=http_status)
+                    return Response(
+                        unified_response.model_dump(exclude_none=True),
+                        status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    )
 
             # Log successful request
             logger.info(
@@ -110,14 +114,18 @@ class UnifiedGatewayView(APIView):
                 f"New Session: {is_new}"
             )
 
-            # Return clean, structured response using Pydantic schema
-            # Include session_id only for new sessions
-            unified_response = UnifiedProcessResponse(
-                status=response_data["status"],
-                remaining_limit=response_data["remaining_limit"],
-                session_id=str(session.session_id) if is_new else None,
-            )
+            # Build success response with dynamic fields
+            response_fields = {
+                "status": "processing",
+                "message": f"{request_type.title()} request accepted for processing",
+                "remaining_limit": response_data["remaining_limit"],
+            }
 
+            # Include session_id only for new sessions
+            if is_new:
+                response_fields["session_id"] = str(session.session_id)
+
+            unified_response = UnifiedProcessResponse(**response_fields)
             return Response(
                 unified_response.model_dump(exclude_none=True),
                 status=status.HTTP_200_OK,
@@ -125,10 +133,11 @@ class UnifiedGatewayView(APIView):
 
         except Exception as e:
             logger.error(f"Unexpected error in UnifiedGatewayView: {e}", exc_info=True)
+            unified_response = UnifiedProcessResponse(
+                status="error",
+                message="Internal server error occurred",
+            )
             return Response(
-                {
-                    "error": "Internal server error",
-                    "message": "An unexpected error occurred while processing your request",
-                },
+                unified_response.model_dump(exclude_none=True),
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )

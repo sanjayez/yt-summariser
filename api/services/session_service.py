@@ -9,7 +9,7 @@ from django.http import HttpRequest
 from django.utils import timezone
 
 from api.models import UnifiedSession
-from api.utils.get_client_ip import get_client_ip
+from api.utils import get_client_ip
 from telemetry.logging import get_logger
 
 logger = get_logger(__name__)

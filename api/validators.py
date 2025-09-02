@@ -1,34 +1,76 @@
 """
-Content Validators for Query Processor
+Content Validators for API Layer
+Centralized validation logic for all request types
 """
-
-# TODO delete this file and related since we moved validation to UnifiedSession
 
 import re
 
 import bleach
 from django.core.exceptions import ValidationError
 
-from video_processor.validators import validate_youtube_url
+# YouTube URL validation regex
+YOUTUBE_URL_REGEX = re.compile(
+    r"(https?://)?(www\.)?(youtube|youtu|youtube-nocookie)\.(com|be)/"
+    r"(watch\?v=|embed/|v/|.+\?v=)?([^&=%\?]{11})"
+)
 
 
-def validate_request_content(content: str, request_type: str) -> dict:
+# TODO
+# Need to modify this helper function
+# we can pass type and check if type and is_video_url or is_playlist_url
+# Simplifying this logic
+def validate_youtube_url(url):
+    """Validate YouTube URL format for both videos and playlists"""
+    if not url:
+        raise ValidationError("URL cannot be empty")
+
+    # Check if it's a valid YouTube domain
+    if not ("youtube.com" in url or "youtu.be" in url):
+        raise ValidationError("Must be a valid YouTube URL")
+
+    # Check if it's a valid YouTube URL pattern (video or playlist)
+    video_patterns = [
+        r"https?://(?:www\.)?youtube\.com/watch\?v=[\w-]{11}",  # Video URLs
+        r"https?://(?:www\.)?youtu\.be/[\w-]{11}",  # Short video URLs
+    ]
+
+    playlist_patterns = [
+        r"https?://(?:www\.)?youtube\.com/playlist\?list=[\w-]+",  # Playlist URLs
+        r"https?://(?:www\.)?youtube\.com/watch\?.*list=[\w-]+",  # Video with playlist
+    ]
+
+    is_valid = any(re.search(pattern, url) for pattern in video_patterns) or any(
+        re.search(pattern, url) for pattern in playlist_patterns
+    )
+
+    if not is_valid:
+        raise ValidationError("Invalid YouTube URL format")
+
+    return url
+
+
+def validate_request_content(content: str, request_type: str) -> None:
+    """Validate request content based on type (validation only, no data construction)"""
     if request_type in ["video", "playlist"]:
-        return _validate_video_content(content, request_type)
+        _validate_video_content(content, request_type)
     elif request_type == "topic":
-        return _validate_topic_content(content)
+        _validate_topic_content(content)
     else:
         raise ValidationError(f"Invalid request type: {request_type}")
 
 
-def _validate_video_content(content: str, request_type: str) -> dict:
+def _validate_video_content(content: str, request_type: str) -> None:
+    """Validate video/playlist URL content"""
     if not content or not content.strip():
         raise ValidationError("URL cannot be empty")
 
     content = content.strip()
 
+    # TODO
+    # Got three branches doing similar things -- checking youtube URL
+    # Need to better handle this by cleaning up the below logic
     try:
-        # Use existing YouTube URL validation from video_processor
+        # Use YouTube URL validation
         validate_youtube_url(content)
     except (ValidationError, ValueError) as e:
         raise ValidationError(f"Invalid YouTube {request_type} URL: {e}") from e
@@ -43,23 +85,9 @@ def _validate_video_content(content: str, request_type: str) -> dict:
             "URL must be a YouTube playlist URL, not a video or channel"
         )
 
-    # Clean URL by removing extra parameters (keep only video ID)
-    cleaned_url = _clean_youtube_url(content, request_type)
 
-    result = {
-        "original_content": content,  # Keep original for audit trail
-        "video_urls": [cleaned_url],  # Use cleaned URL for processing
-        "concepts": [],  # Empty for video/playlist requests
-        "enhanced_queries": [],  # Empty for video/playlist requests
-        "intent_type": None,  # Not applicable for video/playlist requests
-        "total_videos": 1
-        if request_type == "video"
-        else 0,  # 0 for playlists (unknown until processed)
-    }
-    return result
-
-
-def _validate_topic_content(content: str) -> dict:
+def _validate_topic_content(content: str) -> None:
+    """Validate topic search query content"""
     if not content or not content.strip():
         raise ValidationError("Search query cannot be empty")
 
@@ -75,18 +103,6 @@ def _validate_topic_content(content: str) -> dict:
     # Content validation - sanitize and check for suspicious patterns
     if _contains_suspicious_patterns(content):
         raise ValidationError("Search query contains potentially unsafe content")
-
-    # Clean the content using bleach for additional safety
-    content = bleach.clean(content, tags=[], attributes={}, strip=True).strip()
-
-    return {
-        "original_content": content,
-        "video_urls": [],  # Will be populated after query processing
-        "concepts": [],  # Will be populated by LLM
-        "enhanced_queries": [],  # Will be populated by LLM
-        "intent_type": None,  # Will be populated by LLM
-        "total_videos": 0,  # Will be updated after processing
-    }
 
 
 def _is_video_url(url: str) -> bool:
@@ -105,52 +121,6 @@ def _is_playlist_url(url: str) -> bool:
     ]
 
     return any(re.search(pattern, url.strip()) for pattern in playlist_patterns)
-
-
-def _clean_youtube_url(url: str, request_type: str) -> str:
-    """
-    Returns:
-        str: Cleaned YouTube URL with only essential parameters
-    """
-    import urllib.parse as urlparse
-
-    parsed = urlparse.urlparse(url)
-    query_params = urlparse.parse_qs(parsed.query)
-
-    # Essential parameters to keep
-    if request_type == "video":
-        # For videos: keep only 'v' parameter
-        essential_params = {}
-        if "v" in query_params:
-            essential_params["v"] = query_params["v"][0]  # Take first value
-    elif request_type == "playlist":
-        # For playlists: keep 'list' and optionally 'v' if it's a playlist with starting video
-        essential_params = {}
-        if "list" in query_params:
-            essential_params["list"] = query_params["list"][0]
-        if "v" in query_params:  # Starting video in playlist
-            essential_params["v"] = query_params["v"][0]
-    else:
-        # Fallback: keep original
-        return url
-
-    # Rebuild URL with only essential parameters
-    if essential_params:
-        new_query = urlparse.urlencode(essential_params)
-        cleaned_url = urlparse.urlunparse(
-            (
-                parsed.scheme,
-                parsed.netloc,
-                parsed.path,
-                parsed.params,
-                new_query,
-                "",  # Remove fragment
-            )
-        )
-        return cleaned_url
-    else:
-        # If no essential params found, return original
-        return url
 
 
 def _contains_suspicious_patterns(query: str) -> bool:
