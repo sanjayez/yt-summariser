@@ -11,6 +11,10 @@ from rest_framework.views import APIView
 from api.schemas import UnifiedProcessRequest, UnifiedProcessResponse
 from api.services.session_service import SessionService
 from api.utils import get_friendly_error_message
+
+# New imports for async processing
+from query_processor.models import QueryRequest
+from query_processor.tasks import process_query_request
 from telemetry.logging import get_logger
 
 logger = get_logger(__name__)
@@ -114,22 +118,54 @@ class UnifiedGatewayView(APIView):
                 f"New Session: {is_new}"
             )
 
-            # Build success response with dynamic fields
-            response_fields = {
-                "status": "processing",
-                "message": f"{request_type.title()} request accepted for processing",
-                "remaining_limit": response_data["remaining_limit"],
-            }
+            try:
+                # Create QueryRequest with pending status
+                query_request = QueryRequest.objects.create(
+                    unified_session=session,
+                    request_type=request_type,
+                    original_content=content,
+                    status="pending",  # Will be claimed by Celery task
+                )
 
-            # Include session_id only for new sessions
-            if is_new:
-                response_fields["session_id"] = str(session.session_id)
+                # Trigger async processing
+                process_query_request.delay(str(query_request.search_id))
 
-            unified_response = UnifiedProcessResponse(**response_fields)
-            return Response(
-                unified_response.model_dump(exclude_none=True),
-                status=status.HTTP_200_OK,
-            )
+                logger.info(
+                    f"🚀 Triggered async processing for QueryRequest {query_request.search_id}"
+                )
+
+                # Build success response with search_id
+                response_fields = {
+                    "status": "processing",
+                    "message": f"{request_type.title()} request accepted for processing",
+                    "remaining_limit": response_data["remaining_limit"],
+                    "search_id": str(query_request.search_id),
+                }
+
+                # Include session_id only for new sessions
+                if is_new:
+                    response_fields["session_id"] = str(session.session_id)
+
+                unified_response = UnifiedProcessResponse(**response_fields)
+                return Response(
+                    unified_response.model_dump(exclude_none=True),
+                    status=status.HTTP_200_OK,
+                )
+
+            except Exception as e:
+                logger.error(
+                    f"Failed to create QueryRequest or trigger processing: {e}",
+                    exc_info=True,
+                )
+                unified_response = UnifiedProcessResponse(
+                    status="error",
+                    message="Failed to start processing",
+                    remaining_limit=response_data["remaining_limit"],
+                )
+                return Response(
+                    unified_response.model_dump(exclude_none=True),
+                    status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                )
 
         except Exception as e:
             logger.error(f"Unexpected error in UnifiedGatewayView: {e}", exc_info=True)
