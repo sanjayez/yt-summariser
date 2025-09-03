@@ -30,7 +30,7 @@ class UnifiedSession(models.Model):
     last_request_at = models.DateTimeField(auto_now=True)
 
     # Future account integration (for post-alpha account-based tracking)
-    user_account = models.ForeignKey(
+    user_account = models.ForeignKey(  # type: ignore[misc]
         settings.AUTH_USER_MODEL,
         null=True,
         blank=True,
@@ -45,7 +45,7 @@ class UnifiedSession(models.Model):
             models.Index(fields=["created_at"]),
             models.Index(fields=["last_request_at"]),
         ]
-        constraints = [
+        constraints = [  # type: ignore[var-annotated]
             # For now, use a simple approach - one session per IP per day handled in code
             # Future: Add UniqueConstraint with TruncDate when expressions are stable
         ]
@@ -107,7 +107,7 @@ class URLRequestTable(models.Model):
     ]
 
     request_id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    search_request = models.ForeignKey(
+    search_request = models.ForeignKey(  # type: ignore[misc]
         "topic.SearchRequest",
         on_delete=models.CASCADE,
         related_name="url_requests",
@@ -120,19 +120,19 @@ class URLRequestTable(models.Model):
     status = models.CharField(
         max_length=20, choices=STATUS_CHOICES, default="processing"
     )
-    celery_task_id = models.CharField(
+    celery_task_id = models.CharField(  # type: ignore[misc]
         max_length=255,
         null=True,
         blank=True,
         help_text="ID of the main Celery task processing this video",
     )
-    chain_task_id = models.CharField(
+    chain_task_id = models.CharField(  # type: ignore[misc]
         max_length=255,
         null=True,
         blank=True,
         help_text="ID of the Celery chain task for result tracking",
     )
-    failure_reason = models.CharField(
+    failure_reason = models.CharField(  # type: ignore[misc]
         max_length=20,
         choices=FAILURE_REASON_CHOICES,
         null=True,
