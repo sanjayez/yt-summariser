@@ -5,11 +5,12 @@ Handles session creation, validation, and rate limiting across all request types
 
 from typing import Any
 
+from django.db import IntegrityError
 from django.http import HttpRequest
 from django.utils import timezone
 
 from api.models import UnifiedSession
-from api.utils.get_client_ip import get_client_ip
+from api.utils import get_client_ip
 from telemetry.logging import get_logger
 
 logger = get_logger(__name__)
@@ -25,7 +26,7 @@ class SessionService:
     @staticmethod
     def get_or_create_session(
         request: HttpRequest, session_id: str | None = None
-    ) -> tuple[UnifiedSession, bool, str | None]:
+    ) -> tuple[UnifiedSession | None, bool, str | None]:
         """
         Get existing session or create new one with IP-first validation and stale session handling.
 
@@ -55,8 +56,12 @@ class SessionService:
 
                 session = UnifiedSession.objects.get(session_id=session_id)
 
-                # Check if session is fresh and IP matches
-                if session.user_ip == user_ip and session.created_at.date() == today:
+                # Check if session is fresh (by configured window) and IP matches
+                age_days = (today - session.created_at.date()).days
+                if (
+                    session.user_ip == user_ip
+                    and age_days < SessionService.STALE_SESSION_DAYS
+                ):
                     logger.info(
                         f"Retrieved existing session {str(session.session_id)[:8]} for IP {user_ip}"
                     )
@@ -68,9 +73,10 @@ class SessionService:
                         f"Session {session_id[:8]} IP mismatch: expected {session.user_ip}, got {user_ip}"
                     )
                 else:
-                    # IP matches but session failed freshness check - must be stale
                     logger.info(
-                        f"Session {session_id[:8]} is stale (created: {session.created_at.date()}, today: {today})"
+                        f"Session {session_id[:8]} is stale "
+                        f"(created: {session.created_at.date()}, today: {today}, "
+                        f"age_days: {age_days}, stale_after_days: {SessionService.STALE_SESSION_DAYS})"
                     )
 
             except (ValueError, UnifiedSession.DoesNotExist):
@@ -92,12 +98,21 @@ class SessionService:
             )
             return existing_session, False, None
         except UnifiedSession.DoesNotExist:
-            # No session exists for this IP today, create new one
-            new_session = UnifiedSession.objects.create(user_ip=user_ip)
-            logger.info(
-                f"Created new session {str(new_session.session_id)[:8]} for IP {user_ip}"
-            )
-            return new_session, True, None
+            # Attempt create; if another request created concurrently, retry fetch.
+            try:
+                new_session = UnifiedSession.objects.create(user_ip=user_ip)
+                logger.info(
+                    f"Created new session {str(new_session.session_id)[:8]} for IP {user_ip}"
+                )
+                return new_session, True, None
+            except IntegrityError:
+                existing_session = UnifiedSession.objects.get(
+                    user_ip=user_ip, created_at__date=today
+                )
+                logger.info(
+                    f"Recovered existing session {str(existing_session.session_id)[:8]} for IP {user_ip} after race"
+                )
+                return existing_session, False, None
 
     @staticmethod
     def check_rate_limit(
@@ -190,6 +205,8 @@ class SessionService:
             "topic_requests": session.topic_requests,
             "remaining_limit": session.get_remaining_requests(),
             "created_at": session.created_at.isoformat(),
-            "last_request_at": session.last_request_at.isoformat(),
+            "last_request_at": session.last_request_at.isoformat()
+            if session.last_request_at
+            else None,
             "has_account": session.user_account is not None,
         }

@@ -3,6 +3,7 @@ Pydantic schemas for API request/response validation and type safety.
 This provides comprehensive type checking and validation for all API endpoints.
 """
 
+import json
 from datetime import date, datetime
 from decimal import Decimal
 from enum import Enum
@@ -54,22 +55,19 @@ class UnifiedProcessRequest(BaseModel):
 
     @model_validator(mode="after")
     def validate_content_by_type(self):
-        """Validate content based on request type"""
+        """Comprehensive content validation using centralized validators"""
+        from django.core.exceptions import ValidationError as DjangoValidationError
+
+        from api.validators import validate_request_content
+
         content = self.content
         request_type = self.type
 
-        if request_type in ["video", "playlist"]:
-            # For video/playlist, content should be a URL
-            if not (content.startswith(("http://", "https://"))):
-                raise ValueError(
-                    "Content must be a valid URL for video/playlist requests"
-                )
-            if "youtube.com" not in content and "youtu.be" not in content:
-                raise ValueError("Must be a valid YouTube URL")
-        elif request_type == "topic":
-            # For topic search, content should be a non-empty query
-            if len(content) < 4:
-                raise ValueError("Search query must be at least 4 characters long")
+        try:
+            # Use centralized validation function
+            validate_request_content(content, request_type)
+        except DjangoValidationError as e:
+            raise ValueError(str(e)) from e
 
         return self
 
@@ -92,23 +90,30 @@ class UnifiedProcessRequest(BaseModel):
 class UnifiedProcessResponse(BaseModel):
     """Response schema for unified processing endpoint"""
 
-    status: str = Field(
+    status: Literal["processing", "rate_limited", "error"] = Field(
         ..., description="Request status (processing, rate_limited, error)"
     )
-    remaining_limit: int = Field(
-        ..., description="Number of requests remaining for the day"
+    message: str = Field(..., description="Human-readable status message")
+    remaining_limit: int | None = Field(
+        None, description="Requests remaining (success only)"
     )
-    session_id: str | None = Field(None, description="Session ID for new sessions only")
+    session_id: str | None = Field(None, description="Session ID (new sessions only)")
+    search_id: str | None = Field(None, description="Search request ID (success only)")
 
     class Config:
         json_schema_extra = {
             "examples": [
                 {
                     "status": "processing",
+                    "message": "Video request accepted for processing",
                     "remaining_limit": 2,
                     "session_id": "550e8400-e29b-41d4-a716-446655440000",
                 },
-                {"status": "rate_limited", "remaining_limit": 0},
+                {
+                    "status": "rate_limited",
+                    "message": "Daily limit reached. Try again tomorrow",
+                },
+                {"status": "error", "message": "Please provide a valid YouTube URL"},
             ]
         }
 
@@ -367,8 +372,6 @@ class VideoSummaryResponse(BaseModel):
             # Try to convert to list
             try:
                 if isinstance(v, str):
-                    import json
-
                     parsed = json.loads(v)
                     if isinstance(parsed, list):
                         v = parsed
@@ -376,7 +379,7 @@ class VideoSummaryResponse(BaseModel):
                         return [str(v)]
                 else:
                     return [str(v)]
-            except:
+            except (json.JSONDecodeError, TypeError, ValueError):
                 return [str(v)]
 
         # Clean and validate each item
@@ -560,7 +563,10 @@ class VideoURLValidator:
     @staticmethod
     def is_valid_youtube_url(url: str) -> bool:
         """Check if URL is a valid YouTube URL"""
-        return "youtube.com" in url or "youtu.be" in url
+        from urllib.parse import urlparse
+
+        host = urlparse(url).hostname or ""
+        return host.endswith("youtube.com") or host == "youtu.be"
 
     @staticmethod
     def extract_video_id(url: str) -> str | None:
