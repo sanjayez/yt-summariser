@@ -3,6 +3,7 @@ Pydantic schemas for API request/response validation and type safety.
 This provides comprehensive type checking and validation for all API endpoints.
 """
 
+import json
 from datetime import date, datetime
 from decimal import Decimal
 from enum import Enum
@@ -89,7 +90,7 @@ class UnifiedProcessRequest(BaseModel):
 class UnifiedProcessResponse(BaseModel):
     """Response schema for unified processing endpoint"""
 
-    status: str = Field(
+    status: Literal["processing", "rate_limited", "error"] = Field(
         ..., description="Request status (processing, rate_limited, error)"
     )
     message: str = Field(..., description="Human-readable status message")
@@ -104,7 +105,7 @@ class UnifiedProcessResponse(BaseModel):
             "examples": [
                 {
                     "status": "processing",
-                    "message": "Request accepted for processing",
+                    "message": "Video request accepted for processing",
                     "remaining_limit": 2,
                     "session_id": "550e8400-e29b-41d4-a716-446655440000",
                 },
@@ -371,8 +372,6 @@ class VideoSummaryResponse(BaseModel):
             # Try to convert to list
             try:
                 if isinstance(v, str):
-                    import json
-
                     parsed = json.loads(v)
                     if isinstance(parsed, list):
                         v = parsed
@@ -564,7 +563,10 @@ class VideoURLValidator:
     @staticmethod
     def is_valid_youtube_url(url: str) -> bool:
         """Check if URL is a valid YouTube URL"""
-        return "youtube.com" in url or "youtu.be" in url
+        from urllib.parse import urlparse
+
+        host = urlparse(url).hostname or ""
+        return host.endswith("youtube.com") or host == "youtu.be"
 
     @staticmethod
     def extract_video_id(url: str) -> str | None:

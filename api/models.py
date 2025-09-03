@@ -46,7 +46,8 @@ class UnifiedSession(models.Model):
             models.Index(fields=["last_request_at"]),
         ]
         constraints = [
-            # Race condition prevention handled at application level via SessionService
+            # For now, use a simple approach - one session per IP per day handled in code
+            # Future: Add UniqueConstraint with TruncDate when expressions are stable
         ]
 
     def __str__(self):
@@ -140,9 +141,6 @@ class URLRequestTable(models.Model):
     )
     created_at = models.DateTimeField(auto_now_add=True)
 
-    def __str__(self):
-        return f"Request {str(self.request_id)[:8]}"
-
     class Meta:
         indexes = [
             models.Index(fields=["status"]),
@@ -156,3 +154,6 @@ class URLRequestTable(models.Model):
             ),  # Composite index for filtering
         ]
         ordering = ["-created_at"]
+
+    def __str__(self):
+        return f"Request {str(self.request_id)[:8]}"

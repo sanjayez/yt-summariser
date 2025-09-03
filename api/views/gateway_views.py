@@ -10,7 +10,7 @@ from rest_framework.views import APIView
 
 from api.schemas import UnifiedProcessRequest, UnifiedProcessResponse
 from api.services.session_service import SessionService
-from api.utils.error_messages import get_friendly_error_message
+from api.utils import get_friendly_error_message
 from telemetry.logging import get_logger
 
 logger = get_logger(__name__)
@@ -77,7 +77,7 @@ class UnifiedGatewayView(APIView):
                 )
 
             # Extract session and is_new flag
-            session, is_new = session_result[0], session_result[1]
+            session, is_new, _ = session_result
 
             # Check rate limit and update counters
             allowed, response_data = SessionService.check_rate_limit(

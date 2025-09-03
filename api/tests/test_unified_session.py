@@ -31,6 +31,7 @@ class UnifiedSessionValidationTest(TestCase):
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
         data = response.json()
         self.assertEqual(data["status"], "error")
+        self.assertIn("message", data)
         self.assertEqual(data["message"], "Invalid JSON format")
 
     def test_missing_required_fields(self):
@@ -40,6 +41,7 @@ class UnifiedSessionValidationTest(TestCase):
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
         data = response.json()
         self.assertEqual(data["status"], "error")
+        self.assertIn("message", data)
         self.assertIn("request type", data["message"])
 
         # Missing content field
@@ -47,6 +49,7 @@ class UnifiedSessionValidationTest(TestCase):
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
         data = response.json()
         self.assertEqual(data["status"], "error")
+        self.assertIn("message", data)
         self.assertIn("content", data["message"])
 
     def test_invalid_video_urls(self):
@@ -112,6 +115,7 @@ class UnifiedSessionValidationTest(TestCase):
                 data = response.json()
                 self.assertEqual(data["status"], "processing")
                 self.assertIn("remaining_limit", data)
+                self.assertIn("message", data)
 
 
 class UnifiedSessionManagementTest(TestCase):
@@ -161,6 +165,7 @@ class UnifiedSessionManagementTest(TestCase):
         data = response2.json()
         self.assertEqual(data["status"], "processing")
         self.assertEqual(data["remaining_limit"], 1)
+        self.assertIn("message", data)
         self.assertNotIn(
             "session_id", data
         )  # Should not return session_id for existing sessions
@@ -177,6 +182,7 @@ class UnifiedSessionManagementTest(TestCase):
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
         data = response.json()
         self.assertEqual(data["status"], "error")
+        self.assertIn("message", data)
         self.assertIn("Invalid session", data["message"])
 
 
@@ -224,6 +230,7 @@ class UnifiedSessionRateLimitingTest(TestCase):
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         data = response.json()
         self.assertEqual(data["remaining_limit"], 0)
+        self.assertIn("message", data)
 
         # Fourth request (should be rate limited)
         response = self.client.post(
@@ -235,6 +242,7 @@ class UnifiedSessionRateLimitingTest(TestCase):
         self.assertEqual(response.status_code, status.HTTP_429_TOO_MANY_REQUESTS)
         data = response.json()
         self.assertEqual(data["status"], "rate_limited")
+        self.assertIn("message", data)
         self.assertIn("Daily limit reached", data["message"])
 
     @patch("api.utils.get_client_ip.get_client_ip")

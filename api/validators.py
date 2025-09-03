@@ -100,6 +100,18 @@ def _validate_topic_content(content: str) -> None:
     if len(content) > 500:
         raise ValidationError("Search query cannot exceed 500 characters")
 
+    # URL detection - reject URLs for topic searches
+    url_indicators = [
+        r"https?://",  # Protocol
+        r"www\.[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}",  # www.domain.com
+        r"[a-zA-Z0-9.-]+\.(com|org|net|edu|gov|io|co|uk|de|fr|jp|cn|be)\b",  # domain.tld
+    ]
+
+    if any(re.search(pattern, content, re.IGNORECASE) for pattern in url_indicators):
+        raise ValidationError(
+            "Topic searches should be text queries, not URLs. Use 'video' or 'playlist' type for URLs."
+        )
+
     # Content validation - sanitize and check for suspicious patterns
     if _contains_suspicious_patterns(content):
         raise ValidationError("Search query contains potentially unsafe content")

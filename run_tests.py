@@ -34,7 +34,9 @@ def run_tests():
 
     test_files = [f for f in test_files if f not in excluded_tests]
     all_test_files = test_files + api_test_files
-    test_modules = [f.replace("/", ".").replace(".py", "") for f in all_test_files]
+    test_modules = [
+        os.path.splitext(f)[0].replace(os.path.sep, ".") for f in all_test_files
+    ]
 
     # Run specific test modules
     # test_modules = [
