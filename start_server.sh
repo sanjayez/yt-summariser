@@ -70,6 +70,7 @@ case $MODE in
         echo "   Using: Gunicorn with Uvicorn workers"
         echo "   Workers: $WORKERS"
         echo ""
+        mkdir -p logs/application
         exec uv run gunicorn yt_summariser.asgi:application \
             -k uvicorn.workers.UvicornWorker \
             -w "$WORKERS" \

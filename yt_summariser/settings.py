@@ -5,7 +5,7 @@ from urllib.parse import urlparse
 import dj_database_url
 from dotenv import load_dotenv
 
-from .config.logging import get_logging_config
+from .config import get_logging_config
 
 # Fix for macOS fork safety issue with multiprocessing
 os.environ["OBJC_DISABLE_INITIALIZE_FORK_SAFETY"] = "YES"
@@ -334,6 +334,10 @@ if not DEBUG:
             f"Missing required environment variables: {', '.join(missing_vars)}"
         )
 
+
+# Ensure log directories exist before Django logging initialization
+for log_dir in ("logs/application", "logs/celery", "logs/monitoring", "logs/unified"):
+    os.makedirs(log_dir, exist_ok=True)
 
 # Centralized Logging Configuration
 LOGGING = get_logging_config(debug=DEBUG)
