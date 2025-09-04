@@ -77,7 +77,7 @@ class QueryRequest(models.Model):
         help_text="LLM-generated enhanced queries for search execution (topic requests only)",
     )
 
-    intent_type = models.CharField(
+    intent_type = models.CharField(  # type: ignore[misc]
         max_length=20,
         choices=INTENT_CHOICES,
         blank=True,
@@ -102,7 +102,7 @@ class QueryRequest(models.Model):
         help_text="Current processing status",
     )
 
-    error_message = models.TextField(
+    error_message = models.TextField(  # type: ignore[misc]
         blank=True, null=True, help_text="Error details if status is failed"
     )
 
@@ -130,8 +130,8 @@ class QueryRequest(models.Model):
                 name="error_message_present_if_failed",
             ),
         ]
-        verbose_name = "Search Request"
-        verbose_name_plural = "Search Requests"
+        verbose_name = "Query Request"
+        verbose_name_plural = "Query Requests"
 
     def __str__(self):
         content_preview = (
@@ -139,7 +139,9 @@ class QueryRequest(models.Model):
             if len(self.original_content) > 50
             else self.original_content
         )
-        return f"Search {str(self.search_id)[:8]} - {self.request_type} - {content_preview}"
+        return (
+            f"Query {str(self.search_id)[:8]} - {self.request_type} - {content_preview}"
+        )
 
     def is_topic_request(self):
         """Check if this is a topic search request"""

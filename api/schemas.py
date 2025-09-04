@@ -98,7 +98,9 @@ class UnifiedProcessResponse(BaseModel):
         None, description="Requests remaining (success only)"
     )
     session_id: str | None = Field(None, description="Session ID (new sessions only)")
-    search_id: str | None = Field(None, description="Search request ID (success only)")
+    search_id: str | None = Field(
+        None, description="Query request ID for tracking processing status"
+    )
 
     class Config:
         json_schema_extra = {

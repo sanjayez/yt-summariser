@@ -12,7 +12,9 @@ https://docs.djangoproject.com/en/5.2/ref/settings/
 
 import os
 from pathlib import Path
+from urllib.parse import urlparse
 
+import dj_database_url
 from dotenv import load_dotenv
 
 # Fix for macOS fork safety issue with multiprocessing
@@ -107,8 +109,6 @@ ASGI_APPLICATION = "yt_summariser.asgi.application"
 # Database
 # https://docs.djangoproject.com/en/5.2/ref/settings/#databases
 
-import dj_database_url
-
 # Database configuration - use DATABASE_URL if available (for Supabase/Render)
 if "DATABASE_URL" in os.environ:
     DATABASES = {
@@ -184,8 +184,6 @@ DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379")
 
 # Parse Redis URL to extract host and port for configurations that need them separately
-from urllib.parse import urlparse
-
 redis_parsed = urlparse(REDIS_URL)
 REDIS_HOST = redis_parsed.hostname or "localhost"
 REDIS_PORT = redis_parsed.port or 6379
@@ -216,6 +214,12 @@ CELERY_TASK_TIME_LIMIT = 2100  # 35 minutes hard limit
 CELERY_TASK_REJECT_ON_WORKER_LOST = True  # Reject tasks when worker dies
 CELERY_TASK_ACKS_LATE = True  # Only acknowledge tasks after completion
 CELERY_WORKER_DISABLE_RATE_LIMITS = True  # Disable rate limiting for long tasks
+
+# Query Processor Configuration
+QUERY_PROCESSOR_PLAYLIST_MAX_VIDEOS = int(
+    os.getenv("QUERY_PROCESSOR_PLAYLIST_MAX_VIDEOS", 100)
+)
+QUERY_PROCESSOR_PLAYLIST_MIN_VIDEOS = 1
 
 # macOS specific worker settings - PARALLEL PROCESSING CONFIGURATION
 # Choose one approach for parallel processing:
@@ -264,7 +268,7 @@ CHANNEL_LAYERS = {
     "default": {
         "BACKEND": "channels_redis.core.RedisChannelLayer",
         "CONFIG": {
-            "hosts": [(REDIS_HOST, REDIS_PORT)]
+            "hosts": [f"redis://{REDIS_HOST}:{REDIS_PORT}"]
             if not REDIS_PASSWORD
             else [f"redis://:{REDIS_PASSWORD}@{REDIS_HOST}:{REDIS_PORT}"],
         },
