@@ -24,7 +24,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, TypeVar
 
-import psutil
+import psutil  # type: ignore[import-untyped]
 
 from .logging_utils import get_logger
 
@@ -78,7 +78,7 @@ class PerformanceMonitor:
     across the application.
     """
 
-    def __init__(self, name: str = "PerformanceMonitor", enable_gc_stats: bool = True):
+    def __init__(self, name: str = "PerformanceMonitor", enable_gc_stats: bool = False):
         """
         Initialize the performance monitor.
 
@@ -628,7 +628,7 @@ def memory_tracker(name: str, logger_instance: Any | None = None):
     start_time = time.time()
 
     # Stats dictionary to be populated
-    stats = {}
+    stats: dict[str, Any] = {}
 
     try:
         yield stats

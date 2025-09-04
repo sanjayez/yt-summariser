@@ -25,6 +25,22 @@ def get_logger(
     if isinstance(level, str):
         level = getattr(logging, level.upper(), logging.INFO)
 
+    # Check if Django logging is configured
+    try:
+        from django.conf import settings
+
+        django_configured = hasattr(settings, "LOGGING") and settings.LOGGING
+    except (ImportError, Exception):
+        django_configured = False
+
+    if django_configured:
+        # Django logging is configured - let Django handle everything
+        logger.setLevel(level)
+        # Enable propagation to use Django's centralized logging
+        logger.propagate = True
+        return logger
+
+    # Fallback: Django not configured, use telemetry's own logging
     logger.setLevel(level)
 
     # Prevent duplicate handlers
@@ -66,8 +82,9 @@ def setup_logging(
         level = getattr(logging, level.upper(), logging.INFO)
 
     # Create formatter
+    formatter: logging.Formatter
     if json_format:
-        formatter = JSONFormatter()
+        formatter = JSONFormatter()  # type: ignore[assignment]
     else:
         formatter = logging.Formatter(
             fmt=format_string or DEFAULT_FORMAT,

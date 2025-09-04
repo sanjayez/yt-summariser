@@ -15,11 +15,11 @@ from dataclasses import dataclass, field
 from typing import Any
 
 try:
-    import psutil
+    import psutil  # type: ignore
 
     HAS_PSUTIL = True
 except ImportError:
-    psutil = None
+    psutil = None  # type: ignore
     HAS_PSUTIL = False
 
 from ..logging import get_logger
@@ -63,7 +63,7 @@ class PerformanceMetrics:
 class PerformanceMonitor:
     """Centralized performance monitoring system."""
 
-    def __init__(self, name: str = "PerformanceMonitor", enable_gc_stats: bool = True):
+    def __init__(self, name: str = "PerformanceMonitor", enable_gc_stats: bool = False):
         self.name = name
         self.logger = get_logger(f"{__name__}.{name}")
         self.enable_gc_stats = enable_gc_stats

@@ -40,9 +40,9 @@ except ImportError as e:
     logger.error(f"LlamaIndex Google GenAI not available: {e}")
     logger.error("Install with: pip install llama-index-llms-google-genai")
     GEMINI_AVAILABLE = False
-    GoogleGenAI = None
-    LIMessage = None
-    MessageRole = None
+    GoogleGenAI = None  # type: ignore
+    LIMessage = None  # type: ignore
+    MessageRole = None  # type: ignore
 
 
 class GeminiLLMProvider(LLMProvider):
@@ -94,12 +94,14 @@ class GeminiLLMProvider(LLMProvider):
         temperature: float = 0.7,
         max_tokens: int | None = None,
         system_prompt: str | None = None,
+        model: str | None = None,
     ) -> str:
         """Generate text from a prompt using LlamaIndex Gemini integration"""
         try:
             # Configure generation parameters
+            selected_model = model or self.config.gemini.model
             key = (
-                self.config.gemini.model,
+                selected_model,
                 temperature
                 if temperature is not None
                 else self.config.gemini.temperature,
@@ -195,7 +197,7 @@ class GeminiLLMProvider(LLMProvider):
                 choices=[
                     ChatChoice(
                         index=0,
-                        message=ChatMessage(
+                        message=ChatMessage(  # type: ignore
                             role=ChatRole.ASSISTANT,
                             content=str(response.message.content),
                         ),
@@ -268,6 +270,7 @@ class GeminiLLMProvider(LLMProvider):
         """Get list of supported Gemini models"""
         return [
             "gemini-2.5-flash",
+            "gemini-2.5-flash-lite",
             "gemini-1.5-flash",
             "gemini-1.5-pro",
             "gemini-1.5-pro-latest",

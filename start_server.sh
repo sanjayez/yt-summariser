@@ -62,6 +62,7 @@ echo "   Port: $PORT"
 case $MODE in
     "development")
         echo "   Using: Daphne (development server)"
+        echo "   Logs: logs/application/django.log + console"
         echo ""
         exec uv run daphne -b "$HOST" -p "$PORT" yt_summariser.asgi:application
         ;;
@@ -77,8 +78,8 @@ case $MODE in
             --max-requests 10000 \
             --max-requests-jitter 1000 \
             --preload \
-            --access-logfile - \
-            --error-logfile -
+            --access-logfile logs/application/gunicorn-access.log \
+            --error-logfile logs/application/gunicorn-error.log
         ;;
     *)
         echo "❌ Error: Unknown mode '$MODE'. Use 'development' or 'production'"

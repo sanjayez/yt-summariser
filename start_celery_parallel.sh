@@ -64,7 +64,7 @@ for i in $(seq 1 $WORKER_COUNT); do
         --soft-time-limit=1800 \
         --detach \
         --pidfile=/tmp/celery_worker$i.pid \
-        --logfile=/tmp/celery_worker$i.log
+        --logfile=logs/celery/worker$i.log
 
     sleep 1  # Small delay between worker starts
 done
@@ -89,7 +89,7 @@ if [ "$START_FLOWER" = "yes" ]; then
             --loglevel=warning \
             --detach \
             --pidfile=/tmp/flower.pid \
-            --logfile=/tmp/flower.log
+            --logfile=logs/monitoring/flower.log
     else
         # Development Flower - more open and verbose
         echo "🛠️ Starting Flower in DEVELOPMENT mode..."
@@ -102,7 +102,7 @@ if [ "$START_FLOWER" = "yes" ]; then
             --loglevel=info \
             --detach \
             --pidfile=/tmp/flower.pid \
-            --logfile=/tmp/flower.log
+            --logfile=logs/monitoring/flower.log
     fi
 
     # Wait a moment for Flower to start
@@ -125,9 +125,10 @@ fi
 echo ""
 echo "📊 Monitor workers with: uv run celery -A yt_summariser inspect active"
 echo "📋 Stop all with: pkill -f 'celery.*worker'; pkill -f 'celery.*flower'"
-echo "📄 Worker logs: /tmp/celery_worker*.log"
+echo "📄 Worker logs: logs/celery/worker*.log"
 if [ "$START_FLOWER" = "yes" ]; then
-    echo "🌸 Flower log: /tmp/flower.log"
+    echo "🌸 Flower log: logs/monitoring/flower.log"
 fi
+echo "📊 All logs organized in: logs/"
 
 echo "🎉 Parallel processing ready!"
