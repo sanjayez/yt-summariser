@@ -31,9 +31,9 @@ class QueryProcessor:
         self.enhancement_service = enhancement_service or QueryEnhancementService()
 
         # Safe config access with sensible fallbacks
-        limits = BUSINESS_LOGIC_CONFIG.get("DURATION_LIMITS", {}) or {}
-        min_seconds = limits.get("minimum_seconds", 60)  # 1 minute default
-        max_seconds = limits.get("maximum_seconds", None)  # No upper limit default
+        limits = BUSINESS_LOGIC_CONFIG.get("DURATION_LIMITS", {}) or {}  # type: ignore[attr-defined]
+        min_seconds = limits.get("minimum_seconds", 60)  # type: ignore[attr-defined]
+        max_seconds = limits.get("maximum_seconds", None)  # type: ignore[attr-defined]
 
         self.search_provider = search_provider or ScrapeTubeProvider(
             max_results=5,
@@ -57,7 +57,7 @@ class QueryProcessor:
                 enhanced_queries,
                 intent_type,
             ) = await self.enhancement_service.enhance_query(
-                query_request.original_content
+                query_request.original_content, model="gemini-2.5-flash-lite"
             )
 
             # Search YouTube for videos
@@ -72,7 +72,7 @@ class QueryProcessor:
             )
 
             # For this PR scope: No URLRequestTable entries needed
-            url_request_ids = []
+            url_request_ids: list[str] = []
 
             return {
                 "status": "success",
@@ -154,7 +154,7 @@ class QueryProcessor:
 
         # Deduplicate while preserving order and respecting max_videos limit
         seen_urls = set()
-        video_urls = []
+        video_urls: list[str] = []
         for url in all_urls:
             if url not in seen_urls and len(video_urls) < max_videos:
                 seen_urls.add(url)

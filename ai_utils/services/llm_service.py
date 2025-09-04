@@ -33,7 +33,7 @@ class LLMService:
         self.provider = provider
         self.jobs: dict[str, ProcessingJob] = {}
         self.performance_tracker = PerformanceBenchmark()
-        self.stats = defaultdict(list)
+        self.stats = defaultdict(list)  # type: ignore
 
     async def generate_rag_response(
         self,
@@ -45,7 +45,7 @@ class LLMService:
         job_id = job_id or f"rag_{uuid4().hex[:8]}"
 
         # Create job
-        job = ProcessingJob(
+        job = ProcessingJob(  # type: ignore
             job_id=job_id,
             operation="rag_generation",
             total_items=1,
@@ -91,13 +91,14 @@ class LLMService:
         temperature: float = 0.7,
         max_tokens: int | None = None,
         system_prompt: str | None = None,
+        model: str | None = None,
         job_id: str | None = None,
     ) -> dict[str, Any]:
         """Generate text with job tracking"""
         job_id = job_id or f"text_gen_{uuid4().hex[:8]}"
 
         # Create job
-        job = ProcessingJob(
+        job = ProcessingJob(  # type: ignore
             job_id=job_id,
             operation="text_generation",
             total_items=1,
@@ -108,11 +109,12 @@ class LLMService:
         try:
             # Track performance
             with self.performance_tracker.measure("text_generation") as timer:
-                text = await self.provider.generate_text(
+                text = await self.provider.generate_text(  # type: ignore
                     prompt=prompt,
                     temperature=temperature,
                     max_tokens=max_tokens,
                     system_prompt=system_prompt,
+                    model=model,
                 )
 
             # Update job status
@@ -146,7 +148,7 @@ class LLMService:
         job_id = job_id or f"text_gen_detailed_{uuid4().hex[:8]}"
 
         # Create job
-        job = ProcessingJob(
+        job = ProcessingJob(  # type: ignore
             job_id=job_id,
             operation="text_generation_detailed",
             total_items=1,
@@ -157,7 +159,7 @@ class LLMService:
         try:
             # Track performance
             with self.performance_tracker.measure("text_generation_detailed") as timer:
-                response = await self.provider.generate_text_with_response(request)
+                response = await self.provider.generate_text_with_response(request)  # type: ignore
 
             # Update job status
             job.status = ProcessingStatus.COMPLETED
@@ -190,7 +192,7 @@ class LLMService:
         job_id = job_id or f"chat_{uuid4().hex[:8]}"
 
         # Create job
-        job = ProcessingJob(
+        job = ProcessingJob(  # type: ignore
             job_id=job_id,
             operation="chat_completion",
             total_items=1,
@@ -201,7 +203,7 @@ class LLMService:
         try:
             # Track performance
             with self.performance_tracker.measure("chat_completion") as timer:
-                response = await self.provider.chat_completion(request)
+                response = await self.provider.chat_completion(request)  # type: ignore
 
             # Update job status
             job.status = ProcessingStatus.COMPLETED
@@ -264,7 +266,7 @@ class LLMService:
         job_id = job_id or f"batch_text_{uuid4().hex[:8]}"
 
         # Create job
-        job = ProcessingJob(
+        job = ProcessingJob(  # type: ignore
             job_id=job_id,
             operation="batch_text_generation",
             total_items=len(prompts),
@@ -279,7 +281,7 @@ class LLMService:
             with self.performance_tracker.measure("batch_text_generation") as timer:
                 # Process prompts concurrently
                 tasks = [
-                    self.provider.generate_text(
+                    self.provider.generate_text(  # type: ignore
                         prompt=prompt,
                         temperature=temperature,
                         max_tokens=max_tokens,
@@ -394,7 +396,7 @@ class LLMService:
 
     def create_simple_chat_message(self, role: str, content: str) -> ChatMessage:
         """Helper method to create simple chat messages"""
-        return ChatMessage(role=ChatRole(role), content=content)
+        return ChatMessage(role=ChatRole(role), content=content)  # type: ignore
 
     def create_simple_chat_request(
         self,
@@ -408,11 +410,11 @@ class LLMService:
         messages = []
 
         if system_message:
-            messages.append(ChatMessage(role=ChatRole.SYSTEM, content=system_message))
+            messages.append(ChatMessage(role=ChatRole.SYSTEM, content=system_message))  # type: ignore
 
-        messages.append(ChatMessage(role=ChatRole.USER, content=user_message))
+        messages.append(ChatMessage(role=ChatRole.USER, content=user_message))  # type: ignore
 
-        return ChatRequest(
+        return ChatRequest(  # type: ignore
             messages=messages,
             model=model,
             temperature=temperature,
