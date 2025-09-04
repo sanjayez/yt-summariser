@@ -90,9 +90,9 @@ async def _process_request(query_request: QueryRequest) -> dict:
             return await processor.process_query_request(query_request)
 
         elif query_request.request_type == "playlist":
-            # Playlist processing: Extract video URLs from playlist
+            # Playlist processing: Extract video URLs from playlist (uses configurable limit)
             video_urls = await asyncio.to_thread(
-                extract_playlist_videos, query_request.original_content, 50
+                extract_playlist_videos, query_request.original_content
             )
             return {
                 "status": "success",

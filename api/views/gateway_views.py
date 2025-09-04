@@ -138,7 +138,9 @@ class UnifiedGatewayView(APIView):
                 response_fields = {
                     "status": "processing",
                     "message": f"{request_type.title()} request accepted for processing",
-                    "remaining_limit": response_data["remaining_limit"],
+                    "remaining_limit": response_data.get(
+                        "remaining_limit", 0
+                    ),  # Guard against KeyError
                     "search_id": str(query_request.search_id),
                 }
 
