@@ -11,6 +11,11 @@ from django.core.exceptions import ValidationError
 
 from video_processor.validators import validate_youtube_url
 
+# Edge case: Not handled
+# https://www.youtube.com/watch?v=AQYnKn-i0q8&list=PLOLrQ9Pn6cayGytG1fgUPEsUp3Onol8V7&index=1
+# This URL format represents a specific video within a playlist context
+# - it's a valid YouTube URL that serves dual purposes.
+
 
 def validate_request_content(content: str, request_type: str) -> dict:
     if request_type in ["video", "playlist"]:
