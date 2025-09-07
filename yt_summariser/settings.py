@@ -61,6 +61,7 @@ INSTALLED_APPS = [
     "video_processor",
     "topic",
     "query_processor",
+    "yt_workflow",
 ]
 
 MIDDLEWARE = [

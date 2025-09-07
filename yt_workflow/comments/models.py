@@ -12,3 +12,4 @@ class CommentsResult(BaseResult):
     class Meta:
         verbose_name = "Comments Result"
         verbose_name_plural = "Comments Results"
+        db_table = "comments_result"
