@@ -1,6 +1,15 @@
 import uuid
 
+from django.core.validators import RegexValidator
 from django.db import models
+
+
+class StatusChoices(models.TextChoices):
+    """Standard status choices for all workflow models"""
+
+    PENDING = "pending", "Pending"
+    FAILED = "failed", "Failed"
+    SUCCESS = "success", "Success"
 
 
 class YTInsightRun(models.Model):
@@ -15,12 +24,8 @@ class YTInsightRun(models.Model):
     video_ids = models.JSONField(default=list)  # List of video IDs to process
     status = models.CharField(
         max_length=20,
-        default="pending",
-        choices=[
-            ("pending", "Pending"),
-            ("failed", "Failed"),
-            ("success", "Success"),
-        ],
+        default=StatusChoices.PENDING,
+        choices=StatusChoices.choices,
     )
     created_at = models.DateTimeField(auto_now_add=True)
 
@@ -35,15 +40,19 @@ class YTInsightRun(models.Model):
 class BaseResult(models.Model):
     """Abstract base for result models"""
 
-    video_id = models.CharField(max_length=20, db_index=True)
+    video_id = models.CharField(
+        max_length=20,
+        db_index=True,
+        validators=[
+            RegexValidator(
+                regex=r"^[A-Za-z0-9_-]{11}$", message="Invalid YouTube video ID format"
+            )
+        ],
+    )
     status = models.CharField(
         max_length=20,
-        default="pending",
-        choices=[
-            ("pending", "Pending"),
-            ("failed", "Failed"),
-            ("success", "Success"),
-        ],
+        default=StatusChoices.PENDING,
+        choices=StatusChoices.choices,
     )
     created_at = models.DateTimeField(auto_now_add=True)
 
@@ -55,7 +64,7 @@ class VideoTable(BaseResult):
     """Track individual video processing status"""
 
     class Meta:
-        db_table = "video_table"
+        db_table = "yt_videos"
 
     def __str__(self):
         return f"Video {self.video_id} - {self.status}"

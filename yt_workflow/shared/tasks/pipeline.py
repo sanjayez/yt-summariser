@@ -1,10 +1,10 @@
-from celery import group, shared_task
+from celery import chord, group, shared_task
 from django.db import transaction
 
 from query_processor.models import QueryRequest
 from yt_workflow.comments.tasks import process_comments
 from yt_workflow.metadata.tasks import process_metadata
-from yt_workflow.shared.models import VideoTable, YTInsightRun
+from yt_workflow.shared.models import StatusChoices, VideoTable, YTInsightRun
 from yt_workflow.shared.utils import extract_video_id_from_url
 from yt_workflow.transcript.tasks import process_transcript
 
@@ -26,12 +26,12 @@ def yt_pipeline(self, query_result, search_id: str):  # type: ignore
         insight_run = YTInsightRun.objects.create(  # type: ignore
             query_request=query_request,
             video_ids=[],  # Will be populated if successful
-            status="processing",
+            status=StatusChoices.PENDING,
         )
 
     # Check if query processing was successful
     if query_request.status != "success" or not query_request.video_urls:
-        insight_run.status = "failed"
+        insight_run.status = StatusChoices.FAILED
         insight_run.save()
         return  # Database tracks the failure, no return value needed
 
@@ -49,7 +49,7 @@ def yt_pipeline(self, query_result, search_id: str):  # type: ignore
     # Step 3: Check for existing videos in VideoTable
     existing_videos = set(
         VideoTable.objects.filter(  # type: ignore
-            video_id__in=video_ids, status="success"
+            video_id__in=video_ids, status=StatusChoices.SUCCESS
         ).values_list("video_id", flat=True)
     )
 
@@ -57,14 +57,14 @@ def yt_pipeline(self, query_result, search_id: str):  # type: ignore
 
     if not new_video_ids:
         # All videos already processed
-        insight_run.status = "success"
+        insight_run.status = StatusChoices.SUCCESS
         insight_run.save()
         return  # Database tracks completion, no return value needed
 
     # Step 4: Create VideoTable entries for new videos
     for video_id in new_video_ids:
         VideoTable.objects.get_or_create(  # type: ignore
-            video_id=video_id, defaults={"status": "pending"}
+            video_id=video_id, defaults={"status": StatusChoices.PENDING}
         )
 
     # Step 5: Launch parallel processing for new videos
@@ -78,7 +78,9 @@ def yt_pipeline(self, query_result, search_id: str):  # type: ignore
             ]
         )
 
-    # Execute all video processing in parallel
+    # Execute all video processing in parallel with chord callback
     if all_tasks:
-        job = group(*all_tasks)
-        return job.apply_async()
+        from yt_workflow.shared.tasks.aggregate_results import aggregate_results
+
+        extract_and_process = group(*all_tasks)
+        return chord(extract_and_process)(aggregate_results.s(search_id))
