@@ -14,8 +14,8 @@ from api.utils import get_friendly_error_message
 
 # New imports for async processing
 from query_processor.models import QueryRequest
-from query_processor.tasks import process_query_request
 from telemetry.logging import get_logger
+from yt_workflow.orchestrator import yt_orchestrator
 
 logger = get_logger(__name__)
 
@@ -127,8 +127,7 @@ class UnifiedGatewayView(APIView):
                     status="pending",  # Will be claimed by Celery task
                 )
 
-                # Trigger async processing
-                process_query_request.delay(str(query_request.search_id))
+                yt_orchestrator.delay(str(query_request.search_id))
 
                 logger.info(
                     f"🚀 Triggered async processing for QueryRequest {query_request.search_id}"

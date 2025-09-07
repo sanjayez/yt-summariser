@@ -12,3 +12,4 @@ class TranscriptResult(BaseResult):
     class Meta:
         verbose_name = "Transcript Result"
         verbose_name_plural = "Transcript Results"
+        db_table = "transcript_result"

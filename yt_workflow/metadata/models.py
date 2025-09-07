@@ -12,3 +12,4 @@ class MetadataResult(BaseResult):
     class Meta:
         verbose_name = "Metadata Result"
         verbose_name_plural = "Metadata Results"
+        db_table = "metadata_result"
