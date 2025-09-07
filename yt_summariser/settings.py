@@ -342,3 +342,6 @@ for log_dir in ("logs/application", "logs/celery", "logs/monitoring", "logs/unif
 
 # Centralized Logging Configuration
 LOGGING = get_logging_config(debug=DEBUG)
+
+# Node broker base URL (used by yt_workflow.shared.clients.broker_client)
+BROKER_BASE_URL = os.getenv("BROKER_BASE_URL", "http://localhost:3000")
