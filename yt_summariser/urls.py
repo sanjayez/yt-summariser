@@ -25,8 +25,9 @@ urlpatterns = [
     path("api/", include("api.urls")),
     path("video/", include("video_processor.urls")),
     path("api/topic/", include("topic.urls")),
+    path("api/yt_workflow/metadata/", include("yt_workflow.metadata.urls")),
 ]
 
 # Serve static files in development
 if settings.DEBUG:
-    urlpatterns += staticfiles_urlpatterns()
+    urlpatterns += staticfiles_urlpatterns()  # type: ignore

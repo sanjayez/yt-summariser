@@ -1,28 +1,26 @@
+import logging
+
 from celery import shared_task
+
+from yt_workflow.shared.clients.broker_client import get_metadata
+
+logger = logging.getLogger(__name__)
 
 
 @shared_task(bind=True, name="yt_workflow.process_metadata")
 def process_metadata(self, video_id: str):  # type: ignore
     """Process metadata for a single video"""
+    try:
+        logger.info(f"Fetching metadata for video {video_id}")
 
-    # try:
-    #     # Update video status
-    #     video = VideoTable.objects.get(video_id=video_id)  # type: ignore
-    #     video.status = 'processing'
-    #     video.save()
+        # Fetch metadata from broker client
+        metadata_response = get_metadata(video_id)
 
-    #     # TODO: Implement actual metadata processing
-    #     # from yt_workflow.metadata.services.metadata_service import MetadataService
-    #     # service = MetadataService()
-    #     # metadata = service.fetch_metadata(video_id)
-    #     # processed = service.process_metadata(metadata)
+        logger.info(f"Successfully fetched metadata for video {video_id}")
 
-    #     # For now, just mark as completed
-    #     MetadataResult.objects.create(  # type: ignore
-    #         video_id=video_id,
-    #         status='success'
-    #     )
+        # Return the raw JSON response
+        return {"success": True, "video_id": video_id, "metadata": metadata_response}
 
-    #     return {"video_id": video_id, "status": "success", "type": "metadata"}
-    # except Exception as e:
-    #     return {"video_id": video_id, "status": "failed", "type": "metadata", "error": str(e)}
+    except Exception as e:
+        logger.error(f"Failed to fetch metadata for video {video_id}: {str(e)}")
+        return {"success": False, "video_id": video_id, "error": str(e)}
