@@ -6,6 +6,7 @@ from yt_workflow.shared.clients.broker_client import get_transcript
 from yt_workflow.transcript.utils import (
     _normalize_lines,
     assign_primary_macros,
+    batch_insert_transcripts,
     build_macro_chunks,
     build_micro_chunks,
 )
@@ -25,6 +26,12 @@ def process_transcript(self, video_id: str) -> None:  # type: ignore
 
         # Normalize segments into lines
         lines = _normalize_lines(segments, video_id)
+
+        # Batch insert transcript segments into database
+        segments_created = batch_insert_transcripts(lines)
+        logger.info(
+            f"Inserted {segments_created} transcript segments for video {video_id}"
+        )
 
         # Build micro chunks with overlap
         micro_chunks = build_micro_chunks(lines, video_id)
