@@ -32,11 +32,14 @@ def batch_insert_transcripts(lines: list[NormalizedLine]) -> int:
         for line in lines
     ]
 
+    # Calculate dynamic batch size
+    batch_size = min(500, len(segments_to_create))
+
     # Use bulk_create for efficient batch insertion
     with transaction.atomic():
         created_segments = TranscriptSegment.objects.bulk_create(
             segments_to_create,
-            batch_size=100,  # Process in batches of 100
+            batch_size=batch_size,  # Dynamic batch size with 500 minimum
             ignore_conflicts=False,  # Raise error on duplicate line_id
         )
 
