@@ -3,7 +3,7 @@ from django.contrib import admin
 from yt_workflow.models import (
     CommentsResult,
     MetadataResult,
-    TranscriptResult,
+    TranscriptSegment,
     VideoTable,
     YTInsightRun,
 )
@@ -38,9 +38,16 @@ class MetadataResultAdmin(BaseResultAdmin):
     pass
 
 
-@admin.register(TranscriptResult)
-class TranscriptResultAdmin(BaseResultAdmin):
-    pass
+@admin.register(TranscriptSegment)
+class TranscriptSegmentAdmin(admin.ModelAdmin):
+    list_display = ["line_id", "video_id", "idx", "start", "end", "text"]
+    list_filter = ["video_id"]
+    search_fields = ["video_id", "text"]
+    readonly_fields = ["line_id"]
+    ordering = ["video_id", "idx"]
+
+    def get_queryset(self, request):
+        return super().get_queryset(request).select_related()
 
 
 @admin.register(CommentsResult)
