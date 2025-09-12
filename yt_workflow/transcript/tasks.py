@@ -1,24 +1,54 @@
+import logging
+
 from celery import shared_task
+
+from yt_workflow.shared.clients.broker_client import get_transcript
+from yt_workflow.transcript.utils import (
+    _normalize_lines,
+    assign_primary_macros,
+    batch_insert_transcripts,
+    build_macro_chunks,
+    build_micro_chunks,
+)
+
+logger = logging.getLogger(__name__)
 
 
 @shared_task(bind=True, name="yt_workflow.process_transcript")
-def process_transcript(self, video_id: str):  # type: ignore
+def process_transcript(self, video_id: str) -> None:  # type: ignore
     """Process transcript for a single video"""
+    try:
+        logger.info(f"Fetching transcript for video {video_id}")
+        transcript_response = get_transcript(video_id)
+        logger.info(f"Successfully fetched transcript for video {video_id}")
 
-    # try:
-    #     # TODO: Implement actual transcript processing
-    #     # from yt_workflow.transcript.services.transcript_service import TranscriptService
-    #     # service = TranscriptService()
-    #     # transcript = service.fetch_transcript(video_id)
-    #     # processed = service.process_transcript(transcript)
+        segments = transcript_response["data"]["segments"]
 
-    #     # For now, just mark as completed
-    #     from yt_workflow.transcript.models import TranscriptResult
-    #     TranscriptResult.objects.create(  # type: ignore
-    #         video_id=video_id,
-    #         status='success'
-    #     )
+        # Normalize segments into lines
+        lines = _normalize_lines(segments, video_id)
 
-    #     return {"video_id": video_id, "status": "success", "type": "transcript"}
-    # except Exception as e:
-    #     return {"video_id": video_id, "status": "failed", "type": "transcript", "error": str(e)}
+        # Batch insert transcript segments into database
+        segments_created = batch_insert_transcripts(lines)
+        logger.info(
+            f"Inserted {segments_created} transcript segments for video {video_id}"
+        )
+
+        # Build micro chunks with overlap
+        micro_chunks = build_micro_chunks(lines, video_id)
+
+        # Build macro chunks without overlap
+        macro_chunks = build_macro_chunks(lines, video_id)
+
+        # Assign micro chunks to their primary macros
+        assign_primary_macros(micro_chunks, macro_chunks)
+
+        # TODO
+        # to upsert micros and macros to weaviate
+        # to analyse micros for bullet points / promotions / fillers (based on video title, theme of the current chunk)
+        # to analyse macros for chapters
+
+    except Exception as e:
+        # TODO
+        # Should mark YT Insight Run (New version of URLRequest Table) as failed with the error message
+        # After 3 retries
+        logger.error(f"Failed to fetch transcript for video {video_id}: {str(e)}")
