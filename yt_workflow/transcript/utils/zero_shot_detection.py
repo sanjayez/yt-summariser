@@ -10,9 +10,7 @@ from yt_workflow.transcript.types.models import MacroChunk
 
 
 def normalize_text(text: str) -> str:
-    """Normalize text: lowercase, trim whitespace, strip punctuation"""
-    # Convert to lowercase
-    text = text.lower()
+    """Normalize text: whitespace normalization only, preserving case and punctuation for verbatim boundary matching"""
     # Replace multiple whitespaces with single space
     text = re.sub(r"\s+", " ", text)
     # Strip leading/trailing whitespace
@@ -64,6 +62,8 @@ async def detect_chapters(macros: list[MacroChunk], video_id: str) -> dict[str, 
         model="gemini-2.5-flash-lite",
     )
 
+    # TODO: Need to mis-matched response parsing below.
+    # generate_text returns string but we are looking for other fields below
     # Parse response
     if response.get("status") == "failed":
         return {"chapters": [], "error": response.get("error")}
