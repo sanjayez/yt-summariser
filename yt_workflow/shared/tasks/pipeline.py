@@ -2,8 +2,9 @@ from celery import chord, group, shared_task
 from django.db import transaction
 
 from query_processor.models import QueryRequest
-from yt_workflow.comments.tasks import process_comments
-from yt_workflow.metadata.tasks import process_metadata
+
+# from yt_workflow.comments.tasks import process_comments
+# from yt_workflow.metadata.tasks import process_metadata
 from yt_workflow.shared.models import StatusChoices, VideoTable, YTInsightRun
 from yt_workflow.shared.utils import extract_video_id_from_url
 from yt_workflow.transcript.tasks import process_transcript
@@ -72,9 +73,9 @@ def yt_pipeline(self, query_result, search_id: str):  # type: ignore
     for video_id in new_video_ids:
         all_tasks.extend(
             [
-                process_metadata.s(video_id),
+                # process_metadata.s(video_id),
                 process_transcript.s(video_id),
-                process_comments.s(video_id),
+                # process_comments.s(video_id),
             ]
         )
 

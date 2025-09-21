@@ -4,8 +4,15 @@ from yt_workflow.transcript.types import NormalizedLine
 def _normalize_lines(raw_segments: list[dict], video_id: str) -> list[NormalizedLine]:
     """Normalize raw segments into Pydantic models with unique line IDs. 1-based idx."""
     lines = []
+    line_number = 1  # Track actual line numbers for non-empty segments
 
     for i, seg in enumerate(raw_segments):
+        text = str(seg.get("text", "")).strip()
+
+        # Skip empty segments
+        if not text:
+            continue
+
         try:
             start = round(float(seg.get("start_time", 0.0)), 2)
             duration = round(float(seg.get("duration", 0.0)), 2)
@@ -22,16 +29,15 @@ def _normalize_lines(raw_segments: list[dict], video_id: str) -> list[Normalized
             if end > next_start:
                 end = next_start
 
-        text = str(seg.get("text", "")).strip()
-
         line = NormalizedLine(
-            line_id=f"{video_id}_line_{i + 1}",
-            idx=i + 1,
+            line_id=f"{video_id}_line_{line_number}",
+            idx=line_number,
             start=start,
             end=end,
             text=text,
         )
 
         lines.append(line)
+        line_number += 1
 
     return lines
