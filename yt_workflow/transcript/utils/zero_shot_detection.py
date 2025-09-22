@@ -1,12 +1,13 @@
 """Zero-shot chapter detection using single LLM call with verbatim boundaries"""
 
-import json
 import re
 from typing import Any
 
+from llama_index.core.program import LLMTextCompletionProgram
+
 from ai_utils.services.registry import get_gemini_llm_service
 from yt_workflow.transcript.prompts.chapter_detect_prompt import CHAPTER_PROMPT
-from yt_workflow.transcript.types.models import MacroChunk
+from yt_workflow.transcript.types import ChapterDetectionOutput, MacroChunk
 
 
 def normalize_text(text: str) -> str:
@@ -16,21 +17,6 @@ def normalize_text(text: str) -> str:
     # Strip leading/trailing whitespace
     text = text.strip()
     return text
-
-
-def extract_json_from_response(response_text: str) -> str:
-    """Extract JSON from LLM response, handling markdown code blocks"""
-    text = response_text.strip()
-
-    if text.startswith("```json"):
-        text = text[7:]
-    elif text.startswith("```"):
-        text = text[3:]
-
-    if text.endswith("```"):
-        text = text[:-3]
-
-    return text.strip()
 
 
 async def detect_chapters(macros: list[MacroChunk], video_id: str) -> dict[str, Any]:
@@ -52,28 +38,32 @@ async def detect_chapters(macros: list[MacroChunk], video_id: str) -> dict[str, 
     # Build prompt
     prompt = f"{CHAPTER_PROMPT}\n\nTRANSCRIPT:\n{normalized_text}"
 
-    # Make LLM call
+    # Get LLM service and access underlying provider
     llm_service = get_gemini_llm_service()
 
-    response = await llm_service.generate_text(
-        prompt=prompt,
-        temperature=0.1,  # Low temperature for consistent verbatim matching
-        max_tokens=4000,
-        model="gemini-2.5-flash-lite",
-    )
-
-    # TODO: Need to mis-matched response parsing below.
-    # generate_text returns string but we are looking for other fields below
-    # Parse response
-    if response.get("status") == "failed":
-        return {"chapters": [], "error": response.get("error")}
-
     try:
-        clean_json = extract_json_from_response(response["text"])
-        result = json.loads(clean_json)
-        chapters = result.get("chapters", [])
+        # Get the LLM client with specific parameters
+        llm_client = llm_service.provider.get_llm_client(
+            model="gemini-2.5-flash-lite",
+            temperature=0.1,  # Low temperature for consistent verbatim matching
+            max_tokens=4000,
+        )
 
-        return {"chapters": chapters, "method": "verbatim_boundaries"}
+        # Create structured output program
+        program = LLMTextCompletionProgram.from_defaults(
+            output_cls=ChapterDetectionOutput,
+            prompt_template_str="{transcript_text}",
+            llm=llm_client,
+        )
 
-    except json.JSONDecodeError as e:
+        # Execute program with full prompt
+        result = await program.acall(transcript_text=prompt)
+
+        # Convert to dict format
+        return {
+            "chapters": [chapter.model_dump() for chapter in result.chapters],
+            "method": result.method,
+        }
+
+    except Exception as e:
         return {"chapters": [], "error": str(e)}
