@@ -31,3 +31,19 @@ class MacroChunk(BaseModel):
     start: float
     end: float
     text: str
+
+
+class Chapter(BaseModel):
+    """Detected chapter with verbatim boundaries"""
+
+    chapter: str
+    content_type: str
+    start_string: str
+    end_string: str
+
+
+class ChapterDetectionOutput(BaseModel):
+    """Output from chapter detection containing all detected chapters"""
+
+    chapters: list[Chapter]
+    method: str = "verbatim_boundaries"

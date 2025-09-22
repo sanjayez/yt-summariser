@@ -73,6 +73,36 @@ class GeminiLLMProvider(LLMProvider):
             f"Initialized Gemini LLM Provider with model: {config.gemini.model}"
         )
 
+    def get_llm_client(
+        self,
+        model: str | None = None,
+        temperature: float | None = None,
+        max_tokens: int | None = None,
+    ) -> GoogleGenAI:
+        """Get or create a GoogleGenAI client with specified parameters"""
+        selected_model = model or self.config.gemini.model
+        selected_temp = (
+            temperature if temperature is not None else self.config.gemini.temperature
+        )
+        selected_max_tokens = (
+            max_tokens if max_tokens is not None else self.config.gemini.max_tokens
+        )
+
+        key = (selected_model, selected_temp, selected_max_tokens)
+        client = self._client_cache.get(key)
+
+        if client is None:
+            client = GoogleGenAI(
+                model=selected_model,
+                api_key=self.config.gemini.api_key,
+                temperature=selected_temp,
+                max_tokens=selected_max_tokens or 8000,
+                timeout=self.config.gemini.timeout,
+            )
+            self._client_cache[key] = client
+
+        return client
+
     async def generate_rag_response(
         self, query: RAGQuery, context_documents: list[VectorSearchResult]
     ) -> RAGResponse:

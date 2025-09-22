@@ -4,6 +4,7 @@ Defines the contract for RAG and text generation operations.
 """
 
 from abc import ABC, abstractmethod
+from typing import Any
 
 from ..models import RAGQuery, RAGResponse, VectorSearchResult
 
@@ -59,3 +60,22 @@ class LLMProvider(ABC):
         Returns:
             True if healthy, False otherwise
         """
+
+    def get_llm_client(
+        self,
+        model: str | None = None,
+        temperature: float | None = None,
+        max_tokens: int | None = None,
+    ) -> Any:
+        """
+        Get the underlying LLM client with specified parameters.
+
+        Args:
+            model: Model name to use
+            temperature: Generation temperature
+            max_tokens: Maximum tokens to generate
+
+        Returns:
+            The underlying LLM client instance
+        """
+        raise NotImplementedError("get_llm_client not implemented for this provider")
