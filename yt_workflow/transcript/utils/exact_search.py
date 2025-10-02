@@ -10,10 +10,7 @@ logger = logging.getLogger(__name__)
 
 def normalize_text_aggressive(text: str) -> str:
     """
-    Aggressive normalization for exact matching - identical to debug_exact_search.py
-
-    Args:
-        text: Input text to normalize
+    Args: text: Input text to normalize
 
     Returns:
         Normalized string (lowercase, alphanumeric only)
@@ -25,11 +22,9 @@ def build_transcript_mapping(video_id: str) -> tuple[str, list[dict]]:
     """
     Build concatenated transcript with character position mapping
 
-    Args:
-        video_id: Video identifier
+    Args: video_id: Video identifier
 
-    Returns:
-        Tuple of (normalized_text, char_position_map)
+    Returns: Tuple of (normalized_text, char_position_map)
 
     Raises:
         ValueError: If no segments found for video_id
@@ -82,16 +77,16 @@ def find_text_position(normalized_query: str, normalized_text: str) -> int:
 
 def map_position_to_timestamp(
     char_pos: int, char_position_map: list[dict]
-) -> dict | None:
+) -> float | None:
     """
-    Map character position to segment timestamp using binary search
+    Map character position to segment start timestamp using binary search
 
     Args:
         char_pos: Character position in concatenated text
         char_position_map: List of character position mappings (sorted by start_char)
 
     Returns:
-        Dict with timestamp info or None if position not found
+        Start timestamp (float) or None if position not found
     """
     if not char_position_map or char_pos < 0:
         return None
@@ -109,14 +104,7 @@ def map_position_to_timestamp(
         # Verify char_pos falls within this mapping's range
         if mapping["start_char"] <= char_pos < mapping["end_char"]:
             segment = mapping["segment"]
-            return {
-                "start_time": float(segment.start),
-                "end_time": float(segment.end),
-                "line_id": segment.line_id,
-                "idx": segment.idx,
-                "char_position": char_pos,
-                "original_text": segment.text,
-            }
+            return float(segment.start)
 
     return None
 
@@ -176,12 +164,9 @@ def find_anchors(chapters: list[dict], video_id: str) -> list[dict]:
                 continue
 
             # Map to timestamp
-            timestamp_info = map_position_to_timestamp(char_pos, char_position_map)
+            start_time = map_position_to_timestamp(char_pos, char_position_map)
 
-            if timestamp_info:
-                updated_chapter["timestamp"] = timestamp_info["start_time"]
-            else:
-                updated_chapter["timestamp"] = None
+            updated_chapter["timestamp"] = start_time
 
             updated_chapters.append(updated_chapter)
 
