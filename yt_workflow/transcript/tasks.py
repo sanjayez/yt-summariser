@@ -12,6 +12,7 @@ from yt_workflow.transcript.utils import (
     build_macro_chunks,
     build_micro_chunks,
     detect_chapters,
+    find_anchors,
 )
 
 logger = get_logger(__name__)
@@ -49,10 +50,37 @@ def process_transcript(self, video_id: str) -> None:  # type: ignore
 
         vector_result, chapters_result = asyncio.run(process_transcript_chunks())
 
-        logger.info(f"Detected chapters for {video_id}: {chapters_result}")
+        # Map chapter boundaries to timestamps using exact search
+        timestamped_chapters = []
+        if chapters_result and "chapters" in chapters_result:
+            try:
+                # Use exact search for timestamp mapping
+                timestamped_chapters = find_anchors(
+                    chapters_result["chapters"], video_id
+                )
+
+                # Log results
+                successful_count = len(
+                    [
+                        ch
+                        for ch in timestamped_chapters
+                        if ch.get("timestamp") is not None
+                    ]
+                )
+                total_count = len(timestamped_chapters)
+                logger.info(
+                    f"Exact search results for {video_id}: {successful_count}/{total_count} chapters found timestamps"
+                )
+
+            except Exception as e:
+                logger.error(f"Exact search failed for {video_id}: {str(e)}")
+                # Fallback: chapters without timestamps
+                timestamped_chapters = [
+                    {**ch, "timestamp": None} for ch in chapters_result["chapters"]
+                ]
 
         # TODO
-        # to save chapter information to database
+        # to save timestamped_chapters to database
         # to implement retry mechanism for failed vector upserts
 
     except Exception as e:
