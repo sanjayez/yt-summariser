@@ -1,10 +1,13 @@
 import asyncio
 
 from celery import shared_task
+from django.db import transaction
 
 from telemetry import get_logger
 from yt_workflow.shared.clients.broker_client import get_transcript
+from yt_workflow.shared.models import VideoTable
 from yt_workflow.shared.vector_operations import upsert_transcript_chunks
+from yt_workflow.transcript.models import TranscriptSegment
 from yt_workflow.transcript.utils import (
     _normalize_lines,
     assign_primary_macros,
@@ -12,6 +15,7 @@ from yt_workflow.transcript.utils import (
     build_macro_chunks,
     build_micro_chunks,
     detect_chapters,
+    find_anchors,
 )
 
 logger = get_logger(__name__)
@@ -21,6 +25,14 @@ logger = get_logger(__name__)
 def process_transcript(self, video_id: str) -> None:  # type: ignore
     """Process transcript for a single video"""
     try:
+        # Early check - skip if both segments and chapters exist
+        segments_exist = TranscriptSegment.objects.filter(video_id=video_id).exists()
+        video_record, created = VideoTable.objects.get_or_create(video_id=video_id)
+
+        if segments_exist and video_record.chapters:
+            logger.info(f"Video {video_id} already fully processed, skipping")
+            return
+
         # Fetch transcript
         transcript_response = get_transcript(video_id)
         segments = transcript_response["data"]["segments"]
@@ -49,10 +61,41 @@ def process_transcript(self, video_id: str) -> None:  # type: ignore
 
         vector_result, chapters_result = asyncio.run(process_transcript_chunks())
 
-        logger.info(f"Detected chapters for {video_id}: {chapters_result}")
+        # Map chapter boundaries to timestamps using exact search
+        timestamped_chapters = []
+        if chapters_result and "chapters" in chapters_result:
+            try:
+                timestamped_chapters = find_anchors(
+                    chapters_result["chapters"], video_id
+                )
+
+                # Save chapters to VideoTable
+                with transaction.atomic():
+                    video_record, created = VideoTable.objects.get_or_create(
+                        video_id=video_id
+                    )
+                    if not video_record.chapters:
+                        video_record.chapters = timestamped_chapters
+                        video_record.save()
+
+                successful_count = len(
+                    [
+                        ch
+                        for ch in timestamped_chapters
+                        if ch.get("timestamp") is not None
+                    ]
+                )
+                logger.info(
+                    f"Saved {successful_count}/{len(timestamped_chapters)} chapters for {video_id}"
+                )
+
+            except Exception as e:
+                logger.error(f"Chapter processing failed for {video_id}: {str(e)}")
+                timestamped_chapters = [
+                    {**ch, "timestamp": None} for ch in chapters_result["chapters"]
+                ]
 
         # TODO
-        # to save chapter information to database
         # to implement retry mechanism for failed vector upserts
 
     except Exception as e:

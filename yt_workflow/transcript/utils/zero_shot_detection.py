@@ -46,7 +46,7 @@ async def detect_chapters(macros: list[MacroChunk], video_id: str) -> dict[str, 
         llm_client = llm_service.provider.get_llm_client(
             model="gemini-2.5-flash-lite",
             temperature=0.1,  # Low temperature for consistent verbatim matching
-            max_tokens=4000,
+            max_tokens=8000,
         )
 
         # Create structured output program
