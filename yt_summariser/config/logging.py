@@ -108,6 +108,11 @@ def get_logging_config(debug: bool = False) -> dict:
                 "level": "INFO",
                 "propagate": False,
             },
+            "yt_workflow": {
+                "handlers": ["console", "celery_file", "unified_json"],
+                "level": "INFO",
+                "propagate": False,
+            },
             # Telemetry and monitoring
             "telemetry": {
                 "handlers": ["console", "performance_file"],

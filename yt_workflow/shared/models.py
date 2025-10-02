@@ -63,6 +63,10 @@ class BaseResult(models.Model):
 class VideoTable(BaseResult):
     """Track individual video processing status"""
 
+    chapters = models.JSONField(
+        default=list, blank=True, help_text="List of detected chapters with timestamps"
+    )
+
     class Meta:
         db_table = "yt_videos"
 
