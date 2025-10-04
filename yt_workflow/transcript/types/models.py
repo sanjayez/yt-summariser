@@ -47,3 +47,17 @@ class ChapterDetectionOutput(BaseModel):
 
     chapters: list[Chapter]
     method: str = "verbatim_boundaries"
+
+
+class ChapterSummary(BaseModel):
+    """Summary of a single chapter with bullet points"""
+
+    title: str
+    bullet_points: list[str]  # 3-4 bullet points without "•" prefixes
+
+
+class ExecutiveSummary(BaseModel):
+    """Executive summary with key highlights"""
+
+    executive_summary: str  # 2-3 sentences
+    key_highlights: list[str]  # 2-3 key points
