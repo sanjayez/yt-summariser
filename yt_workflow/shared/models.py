@@ -66,6 +66,9 @@ class VideoTable(BaseResult):
     chapters = models.JSONField(
         default=list, blank=True, help_text="List of detected chapters with timestamps"
     )
+    executive_summary = models.JSONField(
+        default=dict, blank=True, help_text="Executive summary with key highlights"
+    )
 
     class Meta:
         db_table = "yt_videos"

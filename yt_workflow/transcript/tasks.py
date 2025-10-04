@@ -1,7 +1,6 @@
 import asyncio
 
 from celery import shared_task
-from django.db import transaction
 
 from telemetry import get_logger
 from yt_workflow.shared.clients.broker_client import get_transcript
@@ -12,10 +11,16 @@ from yt_workflow.transcript.utils import (
     _normalize_lines,
     assign_primary_macros,
     batch_insert_transcripts,
+    build_chapter_chunks,
     build_macro_chunks,
     build_micro_chunks,
     detect_chapters,
+    extract_chapter_ranges,
     find_anchors,
+    generate_executive_summary,
+    save_chapters_to_video_table,
+    summarize_chapter_chunks,
+    update_chapters_with_summary,
 )
 
 logger = get_logger(__name__)
@@ -42,6 +47,8 @@ def process_transcript(self, video_id: str) -> None:  # type: ignore
 
         # Batch insert transcript segments into database
         batch_insert_transcripts(lines)
+
+        # Need to re-think the role and construction of vector chunks
 
         # Build micro chunks with overlap
         micro_chunks = build_micro_chunks(lines, video_id)
@@ -70,23 +77,37 @@ def process_transcript(self, video_id: str) -> None:  # type: ignore
                 )
 
                 # Save chapters to VideoTable
-                with transaction.atomic():
-                    video_record, created = VideoTable.objects.get_or_create(
-                        video_id=video_id
-                    )
-                    if not video_record.chapters:
-                        video_record.chapters = timestamped_chapters
-                        video_record.save()
+                save_chapters_to_video_table(timestamped_chapters, video_id)
 
-                successful_count = len(
-                    [
-                        ch
-                        for ch in timestamped_chapters
-                        if ch.get("timestamp") is not None
-                    ]
+                # Extract chapter ranges using final transcript timestamp
+                final_timestamp = lines[-1].end
+                chapter_ranges = extract_chapter_ranges(
+                    timestamped_chapters, final_timestamp
                 )
+
+                # Build chapter chunks using database queries
+                chapter_chunks = build_chapter_chunks(chapter_ranges, video_id)
+
+                # Summarize chapters in parallel
+                async def process_summaries():
+                    return await summarize_chapter_chunks(chapter_chunks, video_id)
+
+                chapter_summaries = asyncio.run(process_summaries())
+                # logger.info(f"Generated {len(chapter_summaries)} chapter summaries for {video_id}")
+                logger.info(f"chapter summaries for {video_id}: {chapter_summaries}")
+
+                # Generate executive summary
+                async def process_executive_summary():
+                    return await generate_executive_summary(chapter_summaries, video_id)
+
+                executive_summary = asyncio.run(process_executive_summary())
                 logger.info(
-                    f"Saved {successful_count}/{len(timestamped_chapters)} chapters for {video_id}"
+                    f"Generated executive summary for {video_id}: {executive_summary}"
+                )
+
+                # Update chapters with summaries and save executive summary
+                update_chapters_with_summary(
+                    chapter_summaries, executive_summary, video_id
                 )
 
             except Exception as e:

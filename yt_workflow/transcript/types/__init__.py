@@ -3,6 +3,8 @@
 from .models import (
     Chapter,
     ChapterDetectionOutput,
+    ChapterSummary,
+    ExecutiveSummary,
     MacroChunk,
     MicroChunk,
     NormalizedLine,
@@ -14,4 +16,6 @@ __all__ = [
     "MacroChunk",
     "Chapter",
     "ChapterDetectionOutput",
+    "ChapterSummary",
+    "ExecutiveSummary",
 ]
